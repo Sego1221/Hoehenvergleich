@@ -1,10 +1,18 @@
 -- Initiale Migration Hoehenvergleich. Additiv, idempotent (IF NOT EXISTS).
 CREATE TABLE IF NOT EXISTS "projects" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "projekt_nummer" text NOT NULL,
   "name" text NOT NULL,
+  "adresse" text,
+  "ort" text,
   "notes" text,
   "created_at" timestamptz DEFAULT now() NOT NULL
 );
+CREATE INDEX IF NOT EXISTS "projects_nummer_idx" ON "projects" ("projekt_nummer");
+-- Falls die Tabelle aus einer früheren Version ohne diese Spalten existiert:
+ALTER TABLE "projects" ADD COLUMN IF NOT EXISTS "projekt_nummer" text;
+ALTER TABLE "projects" ADD COLUMN IF NOT EXISTS "adresse" text;
+ALTER TABLE "projects" ADD COLUMN IF NOT EXISTS "ort" text;
 
 CREATE TABLE IF NOT EXISTS "project_transforms" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
