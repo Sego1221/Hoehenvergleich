@@ -2,7 +2,7 @@
   "name": "hoehenvergleich-portal-module",
   "version": "0.1.0",
   "private": true,
-  "description": "Birchmeier-Portal-Modul Hoehenvergleich (Soll-Ist-Aushubkontrolle, LV95)",
+  "description": "Birchmeier-Portal-Modul Höhenvergleich (Soll-Ist-Aushubkontrolle, LV95)",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

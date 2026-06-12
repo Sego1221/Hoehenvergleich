@@ -37,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .where(eq(schema.regions.comparisonId, params.id));
 
   const ctx = {
-    title: body?.title ?? "Hoehenvergleich-Protokoll",
+    title: body?.title ?? "Höhenvergleich-Protokoll",
     project: project?.name ?? "",
     comparison: comparison.name,
     survey_date: comparison.surveyDate,

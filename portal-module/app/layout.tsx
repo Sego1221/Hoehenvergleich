@@ -12,7 +12,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { ToastHost } from "@/components/ui";
 
 export const metadata: Metadata = {
-  title: "Hoehenvergleich",
+  title: "Höhenvergleich",
   description: "Soll-Ist-Aushubkontrolle (LV95)",
 };
 
