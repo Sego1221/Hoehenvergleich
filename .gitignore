@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / Next
+node_modules/
+.next/
+out-next/
+npm-debug.log*
+
+# Secrets / Env
+.env
+.env.*
+!.env.example
+
+# Temp-/Test-Checks
+access_check.txt
+bashtest.txt
+verify_full.json
+verify_api.json
+
+# Ausgaben / Testartefakte
+out/
+*.npy
+dz_grid.json
+*.png
+*.tif
+*.pdf
+
+# lokale Testdaten (gross, nicht versionieren)
+*.ifc
+*.laz
+*.las
+
+# OS / Editor
+.DS_Store
+Thumbs.db

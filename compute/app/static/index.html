@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Höhenvergleich Soll-Ist</title>
+<style>
+  :root{
+    --bg:#0f1720; --panel:#16212e; --panel2:#1d2b3a; --line:#2a3a4d;
+    --txt:#e6edf4; --muted:#92a4b8; --accent:#3b9dff; --accent2:#2c7bb6;
+    --ok:#37b37e; --warn:#e0a33a; --bad:#d7493f; --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);
+       color:var(--txt);font-size:14px;line-height:1.45}
+  header{padding:14px 22px;border-bottom:1px solid var(--line);
+         display:flex;align-items:baseline;gap:14px}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header .sub{color:var(--muted);font-size:12px}
+  main{max-width:1180px;margin:0 auto;padding:18px 22px;
+       display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        padding:14px 16px}
+  .card h2{font-size:13px;margin:0 0 12px;text-transform:uppercase;
+           letter-spacing:.05em;color:var(--muted);font-weight:600}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  .filebox{position:relative;border:1px dashed var(--line);border-radius:8px;
+           padding:9px 11px;background:var(--panel2);cursor:pointer;
+           display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .filebox:hover{border-color:var(--accent)}
+  .filebox input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .filebox .fn{font-size:12px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;
+               white-space:nowrap;max-width:210px}
+  .filebox .pick{font-size:11px;color:var(--accent);white-space:nowrap}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  input[type=number]{width:100%;background:var(--panel2);border:1px solid var(--line);
+        color:var(--txt);border-radius:7px;padding:7px 9px;font-size:13px}
+  input[type=number]:focus{outline:none;border-color:var(--accent)}
+  /* Custom Toggle */
+  .toggle{display:flex;align-items:center;gap:9px;margin-top:12px;cursor:pointer}
+  .toggle .sw{width:38px;height:21px;border-radius:11px;background:var(--panel2);
+        border:1px solid var(--line);position:relative;transition:.15s}
+  .toggle .sw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;
+        border-radius:50%;background:var(--muted);transition:.15s}
+  .toggle.on .sw{background:var(--accent2);border-color:var(--accent)}
+  .toggle.on .sw::after{transform:translateX(17px);background:#fff}
+  .toggle span{font-size:12px;color:var(--txt)}
+  button.primary{width:100%;margin-top:16px;background:var(--accent);color:#06121f;
+        border:0;border-radius:8px;padding:11px;font-size:14px;font-weight:600;
+        cursor:pointer;transition:.12s}
+  button.primary:hover{filter:brightness(1.08)}
+  button.primary:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{width:100%;margin-top:10px;background:transparent;color:var(--accent);
+        border:1px solid var(--accent2);border-radius:8px;padding:9px;font-size:13px;
+        cursor:pointer}
+  button.ghost:hover{background:var(--panel2)}
+  button.ghost:disabled{opacity:.4;cursor:not-allowed}
+  /* Kennzahl-Kacheln */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:9px;
+        padding:12px 13px}
+  .tile .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .tile .v{font-size:21px;font-weight:600;margin-top:3px}
+  .tile .u{font-size:12px;color:var(--muted);font-weight:400}
+  .tile.cut .v{color:var(--bad)} .tile.fill .v{color:var(--accent)}
+  .tile.tgt .v{color:var(--ok)}
+  /* Slider */
+  .sliderbox{margin-top:16px;background:var(--panel2);border:1px solid var(--line);
+        border-radius:9px;padding:13px 15px}
+  .sliderbox .lbl{display:flex;justify-content:space-between;align-items:baseline}
+  .sliderbox .lbl b{font-size:13px} .sliderbox .lbl .val{font-size:15px;color:var(--accent);font-weight:600}
+  .slider{position:relative;height:24px;margin-top:10px;cursor:pointer}
+  .slider .track{position:absolute;top:10px;left:0;right:0;height:4px;border-radius:2px;
+        background:var(--line)}
+  .slider .fill{position:absolute;top:10px;left:0;height:4px;border-radius:2px;
+        background:var(--accent)}
+  .slider .knob{position:absolute;top:2px;width:20px;height:20px;border-radius:50%;
+        background:#fff;border:3px solid var(--accent);transform:translateX(-50%);
+        box-shadow:0 1px 4px rgba(0,0,0,.4)}
+  .slider input{position:absolute;inset:0;width:100%;opacity:0;cursor:pointer;margin:0}
+  .ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px}
+  .map{margin-top:16px;border:1px solid var(--line);border-radius:9px;overflow:hidden;
+       background:var(--panel2);min-height:120px;display:flex;align-items:center;justify-content:center}
+  .map img{display:block;width:100%;height:auto}
+  .map .ph{color:var(--muted);font-size:13px;padding:40px}
+  .status{margin-top:12px;font-size:12px;min-height:16px}
+  .status.err{color:var(--bad)} .status.run{color:var(--warn)} .status.ok{color:var(--ok)}
+  .placeholder{color:var(--muted);font-size:13px;padding:30px 6px;text-align:center}
+  @media(max-width:860px){main{grid-template-columns:1fr}.tiles{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Höhenvergleich Soll-Ist</h1>
+  <span class="sub">Aushubkontrolle &middot; Demo-Oberfläche</span>
+</header>
+<main>
+  <!-- Eingabe -->
+  <section class="card">
+    <h2>Eingabe</h2>
+    <label>Soll-Modell (IFC / TIN)</label>
+    <div class="filebox">
+      <span class="fn" id="sollName">Keine Datei gewählt</span>
+      <span class="pick">Wählen</span>
+      <input type="file" id="soll" accept=".ifc,.ifczip,.obj,.ply,.stl,.gltf,.glb,.off,.3mf,.dae">
+    </div>
+    <label>Ist (LAZ / LAS / DSM-GeoTIFF)</label>
+    <div class="filebox">
+      <span class="fn" id="cloudName">Keine Datei gewählt</span>
+      <span class="pick">Wählen</span>
+      <input type="file" id="cloud" accept=".laz,.las,.tif,.tiff,.gtiff">
+    </div>
+
+    <div class="row2">
+      <div>
+        <label>Rasterweite [m]</label>
+        <input type="number" id="res" value="0.25" min="0.05" max="2" step="0.05">
+      </div>
+      <div>
+        <label>Veg.-Schwelle (ExG)</label>
+        <input type="number" id="exg" value="0.10" min="0" max="1" step="0.05">
+      </div>
+    </div>
+
+    <div class="toggle on" id="vegToggle">
+      <div class="sw"></div>
+      <span>Vegetationsfilter (RGB)</span>
+    </div>
+
+    <button class="primary" id="run">Vergleich starten</button>
+    <button class="ghost" id="pdf" disabled>PDF-Protokoll herunterladen</button>
+    <div class="status" id="status"></div>
+  </section>
+
+  <!-- Ergebnis -->
+  <section class="card">
+    <h2>Ergebnis</h2>
+    <div id="resultArea">
+      <div class="placeholder">Noch kein Vergleich. Dateien wählen und „Vergleich starten".</div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let jobId = null, vegOn = true, tol = 5, slidePending = null;
+
+// Datei-Namen anzeigen
+$("soll").addEventListener("change", e => $("sollName").textContent = e.target.files[0]?.name || "Keine Datei gewählt");
+$("cloud").addEventListener("change", e => $("cloudName").textContent = e.target.files[0]?.name || "Keine Datei gewählt");
+
+// Toggle
+$("vegToggle").addEventListener("click", () => {
+  vegOn = !vegOn;
+  $("vegToggle").classList.toggle("on", vegOn);
+});
+
+function setStatus(msg, cls){ const s=$("status"); s.textContent=msg; s.className="status "+(cls||""); }
+
+function fmt(n, d){ return (n==null||isNaN(n)) ? "–" : Number(n).toLocaleString("de-CH",{maximumFractionDigits:d,minimumFractionDigits:d}); }
+
+function renderResult(st){
+  const area = $("resultArea");
+  area.innerHTML = `
+    <div class="tiles">
+      <div class="tile cut"><div class="k">Restaushub (Cut)</div><div class="v">${fmt(st.cut_m3,0)} <span class="u">m³</span></div></div>
+      <div class="tile fill"><div class="k">Auffüllung (Fill)</div><div class="v">${fmt(st.fill_m3,0)} <span class="u">m³</span></div></div>
+      <div class="tile"><div class="k">Netto</div><div class="v">${st.net_m3>=0?"+":""}${fmt(st.net_m3,0)} <span class="u">m³</span></div></div>
+      <div class="tile tgt"><div class="k">Auf Soll</div><div class="v" id="tgtVal">${fmt(st.on_target_pct,1)} <span class="u">%</span></div></div>
+    </div>
+    <div class="sliderbox">
+      <div class="lbl"><b>Toleranz</b><span class="val" id="tolVal">±${tol} cm</span></div>
+      <div class="slider" id="slider">
+        <div class="track"></div><div class="fill" id="sfill"></div><div class="knob" id="sknob"></div>
+        <input type="range" min="0" max="20" step="1" value="${tol}" id="sinput">
+      </div>
+      <div class="ticks"><span>0</span><span>5</span><span>10</span><span>15</span><span>20</span></div>
+    </div>
+    <div class="map" id="map"><div class="ph">Karte wird geladen …</div></div>
+  `;
+  setupSlider();
+  loadMap();
+}
+
+function setupSlider(){
+  const inp = $("sinput");
+  const upd = () => {
+    tol = parseInt(inp.value,10);
+    const p = (tol/20)*100;
+    $("sfill").style.width = p+"%";
+    $("sknob").style.left = p+"%";
+    $("tolVal").textContent = "±"+tol+" cm";
+  };
+  upd();
+  inp.addEventListener("input", () => {
+    upd();
+    clearTimeout(slidePending);
+    slidePending = setTimeout(refreshStats, 120);
+  });
+}
+
+async function refreshStats(){
+  if(!jobId) return;
+  try{
+    const r = await fetch(`/jobs/${jobId}/stats?tol=${(tol/100).toFixed(3)}`);
+    if(!r.ok) return;
+    const st = await r.json();
+    $("tgtVal").innerHTML = `${fmt(st.on_target_pct,1)} <span class="u">%</span>`;
+    // Cut/Fill/Netto ändern sich nicht mit Toleranz, bleiben stehen
+  }catch(e){}
+}
+
+function loadMap(){
+  const map = $("map");
+  const img = new Image();
+  img.onload = () => { map.innerHTML=""; map.appendChild(img); };
+  img.onerror = () => { map.innerHTML='<div class="ph">Karte nicht verfügbar.</div>'; };
+  img.src = `/jobs/${jobId}/dz.png?tol=${(tol/100).toFixed(3)}&t=${Date.now()}`;
+}
+
+$("run").addEventListener("click", async () => {
+  const sf = $("soll").files[0], cf = $("cloud").files[0];
+  if(!sf || !cf){ setStatus("Bitte Soll- und Ist-Datei wählen.","err"); return; }
+  const fd = new FormData();
+  fd.append("soll", sf); fd.append("cloud", cf);
+  fd.append("res", $("res").value);
+  fd.append("exg_thr", $("exg").value);
+  fd.append("use_veg", vegOn ? "true" : "false");
+  fd.append("tol", (tol/100).toFixed(3));
+  $("run").disabled = true; $("pdf").disabled = true;
+  setStatus("Vergleich läuft … (ca. 10 s)","run");
+  try{
+    const r = await fetch("/compare", { method:"POST", body:fd });
+    if(!r.ok){ const t=await r.text(); throw new Error(t.slice(0,200)); }
+    const data = await r.json();
+    jobId = data.job_id;
+    renderResult(data.stats);
+    $("pdf").disabled = false;
+    setStatus("Vergleich abgeschlossen (Job "+jobId+").","ok");
+  }catch(e){
+    setStatus("Fehler: "+e.message,"err");
+  }finally{
+    $("run").disabled = false;
+  }
+});
+
+$("pdf").addEventListener("click", async () => {
+  if(!jobId) return;
+  setStatus("PDF wird erstellt …","run");
+  try{
+    const r = await fetch(`/jobs/${jobId}/protocol.pdf`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        title:"Höhenvergleich Soll-Ist",
+        soll_name: $("soll").files[0]?.name || "-",
+        ist_name: $("cloud").files[0]?.name || "-",
+        tol: tol/100
+      })
+    });
+    if(!r.ok) throw new Error("Status "+r.status);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `protokoll_${jobId}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setStatus("PDF heruntergeladen.","ok");
+  }catch(e){
+    setStatus("PDF-Fehler: "+e.message,"err");
+  }
+});
+</script>
+</body>
+</html>
