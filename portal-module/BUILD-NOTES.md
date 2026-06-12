@@ -20,10 +20,20 @@ nur die Vergleichs-/Profil-/Volumen-/PDF-Aufrufe fehl (mit Toast-Meldung).
   TODO: Portal-JWT mit `PORTAL_JWT_SECRET`/JWKS verifizieren, Modul-Freischaltung
   (`hoehenvergleich`) prüfen, bei fehlender Berechtigung auf Portal-Login leiten
   (z.B. via `middleware.ts`).
-- **Sidebar** (`app/layout.tsx`): minimaler Stub. TODO: kanonische Birchmeier-
-  Sidebar einsetzen — App-Optionen oben, Gruppe „Apps" unten mit Icons aus
-  `/api/portal/modules-meta`, App-Liste aus dem JWT. Aktuell nur Modul-Links +
-  Benutzername.
+- **Sidebar** (`components/Sidebar.tsx`, eingebunden in `app/layout.tsx`):
+  kanonische Birchmeier-App-Sidebar (HELLES Theme). App-Optionen oben
+  („Projekte"), Gruppe „Apps" unten mit der einheitlichen App-Liste. Die Liste
+  kommt aus `/api/portal/modules-meta` (echte lucide-Icons/Labels/Pfade, per
+  Portal-JWT gefiltert; admin sieht alle, sonst nur freigeschaltete Module);
+  fehlt der Endpoint, greift die lokale Registry (`lib/apps.ts`).
+  - **WICHTIG — Railway-ENV `PORTAL_URL`**: Damit der serverseitige Vorabruf
+    (`lib/portal-modules.ts`) die echten Modul-Metadaten holt, muss `PORTAL_URL`
+    gesetzt sein, intern `http://portal.railway.internal:8080`. Ohne `PORTAL_URL`
+    rendert die Sidebar nur die lokale Fallback-Registry. Der Client-Nachzug
+    (`fetch("/api/portal/modules-meta")`) läuft gleich-origin über das Gateway
+    und braucht keine ENV.
+  - Aktiver App-eigener Nav-Punkt via `usePathname()`; aktive App (diese hier =
+    `hoehenvergleich`) in der „Apps"-Liste hervorgehoben.
 - **Single Domain / Gateway**: Annahme, dass das Modul hinter dem Portal-Gateway
   unter einem Pfad-Prefix läuft. `basePath`/`assetPrefix` in `next.config.mjs` bei
   Bedarf ergänzen (derzeit Root-Deploy angenommen).
