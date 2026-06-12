@@ -4,15 +4,18 @@
  * gespeicherte Schnitte und Bereiche. Der Compute-Service bleibt stateless.
  */
 import {
-  pgTable, uuid, text, timestamp, doublePrecision, integer, boolean, jsonb, index,
+  pgSchema, uuid, text, timestamp, doublePrecision, integer, boolean, jsonb, index,
 } from "drizzle-orm/pg-core";
+
+// Eigenes Schema im geteilten Postgres (Muster wie lastplaner/portal).
+export const hv = pgSchema("hoehenvergleich");
 
 /**
  * Projekt = eine Baustelle (oberste Ebene der Projekt-Hierarchie).
  * Birchmeier-Standard: jedes Projekt trägt Projektnummer, Projektname, Adresse, Ort.
  * Hält zudem die Georef-Transformation lokal↔LV95.
  */
-export const projects = pgTable("projects", {
+export const projects = hv.table("projects", {
   id: uuid("id").primaryKey().defaultRandom(),
   projektNummer: text("projekt_nummer").notNull(),   // Projektnummer (eindeutig je Mandant)
   name: text("name").notNull(),                       // Projektname
@@ -26,7 +29,7 @@ export const projects = pgTable("projects", {
  * Georef-Transformation pro Projekt (wiederverwendbar für alle Modelle).
  * Konvention: LV95 = Rz(-angle) · (lokal − T), T = (tE, tN, tH). Massstab = 1.
  */
-export const projectTransforms = pgTable("project_transforms", {
+export const projectTransforms = hv.table("project_transforms", {
   id: uuid("id").primaryKey().defaultRandom(),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   label: text("label").notNull().default("Standard"),
@@ -40,7 +43,7 @@ export const projectTransforms = pgTable("project_transforms", {
 });
 
 /** Ein Vergleichslauf (Befliegung gegen Soll). Bildet die Historie. */
-export const comparisons = pgTable("comparisons", {
+export const comparisons = hv.table("comparisons", {
   id: uuid("id").primaryKey().defaultRandom(),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
@@ -58,7 +61,7 @@ export const comparisons = pgTable("comparisons", {
 }, (t) => ({ byProject: index("comparisons_project_idx").on(t.projectId) }));
 
 /** Gespeicherte Schnittlinie (Längs/Quer) zu einem Vergleich. */
-export const sections = pgTable("sections", {
+export const sections = hv.table("sections", {
   id: uuid("id").primaryKey().defaultRandom(),
   comparisonId: uuid("comparison_id").notNull().references(() => comparisons.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
@@ -67,7 +70,7 @@ export const sections = pgTable("sections", {
 });
 
 /** Gespeicherter Bereich (Polygon) für Teil-Volumen Cut/Fill. */
-export const regions = pgTable("regions", {
+export const regions = hv.table("regions", {
   id: uuid("id").primaryKey().defaultRandom(),
   comparisonId: uuid("comparison_id").notNull().references(() => comparisons.id, { onDelete: "cascade" }),
   name: text("name").notNull(),

@@ -1,5 +1,8 @@
--- Initiale Migration Hoehenvergleich. Additiv, idempotent (IF NOT EXISTS).
-CREATE TABLE IF NOT EXISTS "projects" (
+-- Initiale Migration Höhenvergleich. Eigenes Schema (Muster wie lastplaner/portal),
+-- additiv/idempotent (IF NOT EXISTS).
+CREATE SCHEMA IF NOT EXISTS "hoehenvergleich";
+
+CREATE TABLE IF NOT EXISTS "hoehenvergleich"."projects" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "projekt_nummer" text NOT NULL,
   "name" text NOT NULL,
@@ -8,13 +11,9 @@ CREATE TABLE IF NOT EXISTS "projects" (
   "notes" text,
   "created_at" timestamptz DEFAULT now() NOT NULL
 );
-CREATE INDEX IF NOT EXISTS "projects_nummer_idx" ON "projects" ("projekt_nummer");
--- Falls die Tabelle aus einer früheren Version ohne diese Spalten existiert:
-ALTER TABLE "projects" ADD COLUMN IF NOT EXISTS "projekt_nummer" text;
-ALTER TABLE "projects" ADD COLUMN IF NOT EXISTS "adresse" text;
-ALTER TABLE "projects" ADD COLUMN IF NOT EXISTS "ort" text;
+CREATE INDEX IF NOT EXISTS "projects_nummer_idx" ON "hoehenvergleich"."projects" ("projekt_nummer");
 
-CREATE TABLE IF NOT EXISTS "project_transforms" (
+CREATE TABLE IF NOT EXISTS "hoehenvergleich"."project_transforms" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "project_id" uuid NOT NULL,
   "label" text DEFAULT 'Standard' NOT NULL,
@@ -26,10 +25,10 @@ CREATE TABLE IF NOT EXISTS "project_transforms" (
   "verified_at" timestamptz,
   "created_at" timestamptz DEFAULT now() NOT NULL,
   CONSTRAINT "project_transforms_project_id_fk" FOREIGN KEY ("project_id")
-    REFERENCES "projects"("id") ON DELETE cascade
+    REFERENCES "hoehenvergleich"."projects"("id") ON DELETE cascade
 );
 
-CREATE TABLE IF NOT EXISTS "comparisons" (
+CREATE TABLE IF NOT EXISTS "hoehenvergleich"."comparisons" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "project_id" uuid NOT NULL,
   "name" text NOT NULL,
@@ -45,26 +44,26 @@ CREATE TABLE IF NOT EXISTS "comparisons" (
   "created_by" text,
   "created_at" timestamptz DEFAULT now() NOT NULL,
   CONSTRAINT "comparisons_project_id_fk" FOREIGN KEY ("project_id")
-    REFERENCES "projects"("id") ON DELETE cascade
+    REFERENCES "hoehenvergleich"."projects"("id") ON DELETE cascade
 );
-CREATE INDEX IF NOT EXISTS "comparisons_project_idx" ON "comparisons" ("project_id");
+CREATE INDEX IF NOT EXISTS "comparisons_project_idx" ON "hoehenvergleich"."comparisons" ("project_id");
 
-CREATE TABLE IF NOT EXISTS "sections" (
+CREATE TABLE IF NOT EXISTS "hoehenvergleich"."sections" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "comparison_id" uuid NOT NULL,
   "name" text NOT NULL,
   "kind" text,
   "line" jsonb NOT NULL,
   CONSTRAINT "sections_comparison_id_fk" FOREIGN KEY ("comparison_id")
-    REFERENCES "comparisons"("id") ON DELETE cascade
+    REFERENCES "hoehenvergleich"."comparisons"("id") ON DELETE cascade
 );
 
-CREATE TABLE IF NOT EXISTS "regions" (
+CREATE TABLE IF NOT EXISTS "hoehenvergleich"."regions" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "comparison_id" uuid NOT NULL,
   "name" text NOT NULL,
   "polygon" jsonb NOT NULL,
   "volumes" jsonb,
   CONSTRAINT "regions_comparison_id_fk" FOREIGN KEY ("comparison_id")
-    REFERENCES "comparisons"("id") ON DELETE cascade
+    REFERENCES "hoehenvergleich"."comparisons"("id") ON DELETE cascade
 );

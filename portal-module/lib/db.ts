@@ -21,6 +21,8 @@ export const sql =
   globalForDb.__hv_sql ??
   postgres(connectionString ?? "", {
     max: 10,
+    // Eigenes Schema im geteilten Postgres (Muster wie lastplaner/portal).
+    connection: { search_path: "hoehenvergleich,public" },
     // Railway-Postgres SSL standardmaessig aktiv; lokal PGlite/lokal egal.
     ...(process.env.DATABASE_SSL === "disable" ? { ssl: false } : {}),
   });
