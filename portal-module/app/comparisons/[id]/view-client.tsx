@@ -11,6 +11,7 @@ import { Slider, useToast } from "@/components/ui";
 import { ProfileChart } from "@/components/ProfileChart";
 import { m3, m2, pct } from "@/lib/format";
 import type { Profile, Stats, Volumes } from "@/lib/computeClient";
+import { BP } from "@/lib/api";
 
 // Karte nur clientseitig (Leaflet kennt window/document).
 const HoehenMap = dynamicImport(() => import("@/components/HoehenMap"), { ssr: false });
@@ -45,7 +46,7 @@ export function CompareView({
     if (debTimer.current) clearTimeout(debTimer.current);
     debTimer.current = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/comparisons/${comparisonId}/stats?tol=${tol}`);
+        const r = await fetch(`${BP}/api/comparisons/${comparisonId}/stats?tol=${tol}`);
         if (r.ok) setLive(await r.json());
       } catch { /* still */ }
     }, 250);
@@ -58,7 +59,7 @@ export function CompareView({
     if (mode === "line") {
       setBusy("Profil…");
       try {
-        const r = await fetch(`/api/comparisons/${comparisonId}/profile`, {
+        const r = await fetch(`${BP}/api/comparisons/${comparisonId}/profile`, {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ line: pts }),
         });
@@ -71,7 +72,7 @@ export function CompareView({
     } else if (mode === "polygon") {
       setBusy("Volumen…");
       try {
-        const r = await fetch(`/api/comparisons/${comparisonId}/regions`, {
+        const r = await fetch(`${BP}/api/comparisons/${comparisonId}/regions`, {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ polygon: pts, tol }),
         });
@@ -90,7 +91,7 @@ export function CompareView({
 
   async function saveSection(name: string) {
     if (!pendingLine) return;
-    const r = await fetch(`/api/comparisons/${comparisonId}/sections`, {
+    const r = await fetch(`${BP}/api/comparisons/${comparisonId}/sections`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, line: pendingLine }),
     });
@@ -101,7 +102,7 @@ export function CompareView({
 
   async function saveRegion(name: string) {
     if (!pendingPoly) return;
-    const r = await fetch(`/api/comparisons/${comparisonId}/regions`, {
+    const r = await fetch(`${BP}/api/comparisons/${comparisonId}/regions`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, polygon: pendingPoly, tol, save: true }),
     });
@@ -113,7 +114,7 @@ export function CompareView({
   async function downloadPdf() {
     setBusy("PDF…");
     try {
-      const r = await fetch(`/api/comparisons/${comparisonId}/protocol`, {
+      const r = await fetch(`${BP}/api/comparisons/${comparisonId}/protocol`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ tol, title: `Höhenvergleich ${projectName}` }),
       });

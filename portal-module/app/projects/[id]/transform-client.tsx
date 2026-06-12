@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Select, useToast } from "@/components/ui";
 import { dateCH } from "@/lib/format";
+import { BP } from "@/lib/api";
 
 type T = {
   tE: number; tN: number; tH: number; angleDeg: number;
@@ -21,7 +22,7 @@ export function TransformPanel({ projectId, initial }: { projectId: string; init
   async function save() {
     setBusy(true);
     try {
-      const r = await fetch(`/api/projects/${projectId}/transform`, {
+      const r = await fetch(`${BP}/api/projects/${projectId}/transform`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

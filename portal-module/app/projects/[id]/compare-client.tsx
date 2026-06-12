@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Dialog, Slider, useToast } from "@/components/ui";
 import { m3, pct, dateCH } from "@/lib/format";
+import { BP } from "@/lib/api";
 
 type Comp = {
   id: string; name: string; surveyDate: string | null;
@@ -102,10 +103,10 @@ function NewComparisonDialog({
       fd.append("ground_pct", String(groundPct));
       fd.append("use_veg", String(useVeg));
       if (useTransform) {
-        const tr = await fetch(`/api/projects/${projectId}/transform`).then((r) => r.json());
+        const tr = await fetch(`${BP}/api/projects/${projectId}/transform`).then((r) => r.json());
         if (tr) fd.append("transform", JSON.stringify(tr));
       }
-      const r = await fetch(`/api/projects/${projectId}/comparisons`, { method: "POST", body: fd });
+      const r = await fetch(`${BP}/api/projects/${projectId}/comparisons`, { method: "POST", body: fd });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "Fehler");
       toast("Vergleich berechnet.");

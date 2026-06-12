@@ -11,6 +11,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
+import { BP } from "@/lib/api";
 
 export type Mode = "view" | "line" | "polygon";
 
@@ -173,7 +174,7 @@ export default function HoehenMap(props: Props) {
         try {
           const parseGeoraster = (await import("georaster")).default as any;
           const GeoRasterLayer = (await import("georaster-layer-for-leaflet")).default as any;
-          const res = await fetch(`/api/comparisons/${props.comparisonId}/dz?fmt=tif`);
+          const res = await fetch(`${BP}/api/comparisons/${props.comparisonId}/dz?fmt=tif`);
           if (!res.ok) throw new Error("kein GeoTIFF");
           const buf = await res.arrayBuffer();
           const georaster = await parseGeoraster(buf);

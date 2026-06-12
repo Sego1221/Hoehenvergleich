@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog } from "@/components/ui";
+import { BP } from "@/lib/api";
 
 export function NewProject() {
   const [open, setOpen] = useState(false);
@@ -20,7 +21,7 @@ export function NewProject() {
   async function save() {
     setBusy(true); setErr(null);
     try {
-      const r = await fetch("/api/projects", {
+      const r = await fetch(`${BP}/api/projects`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projektNummer, name, adresse, ort, notes }),
