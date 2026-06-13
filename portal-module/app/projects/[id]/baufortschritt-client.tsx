@@ -83,6 +83,25 @@ export function BaufortschrittPanel({
     return Object.values(gebautSeit).filter((dd) => dd <= d).length;
   }, [gebautSeit, sel]);
 
+  // Scan-Timeline (PIX4D-Stil): chronologisch, x-Position nach echtem Zeitabstand.
+  const sortedRuns = useMemo(
+    () => [...runs].sort((a, b) => dkey(a).localeCompare(dkey(b))),
+    [runs],
+  );
+  const timelinePos = useMemo(() => {
+    const times = sortedRuns.map((r) => new Date(dkey(r)).getTime());
+    const tMin = Math.min(...times), tMax = Math.max(...times);
+    const m: Record<string, number> = {};
+    sortedRuns.forEach((r, i) => {
+      if (sortedRuns.length === 1) m[r.id] = 50;
+      else if (tMax === tMin) m[r.id] = 4 + (92 * i) / (sortedRuns.length - 1);
+      else m[r.id] = 4 + (92 * (new Date(dkey(r)).getTime() - tMin)) / (tMax - tMin);
+    });
+    return m;
+  }, [sortedRuns]);
+  const cumPctAt = (r: Run) =>
+    total ? Math.round((100 * Object.values(gebautSeit).filter((d) => d <= dkey(r)).length) / total) : 0;
+
   async function setStatusOverride(guid: string, st: StatusKey) {
     if (!sel) return;
     const next = { ...overrides, [guid]: st };
@@ -160,30 +179,60 @@ export function BaufortschrittPanel({
 
   return (
     <div className="grid" style={{ gap: 12 }}>
-      {/* Fortschritt: immer zuoberst, gross und ohne Scrollen sichtbar */}
-      {sel && (
-        <div className="panel" style={{ padding: "10px 14px" }}>
-          <div className="spread" style={{ alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-              <strong style={{ fontSize: 22, color: COLOR.gebaut }}>{kumGebaut}</strong>
-              <span className="muted">von {total} Bauteilen gebaut</span>
-              {total ? <strong style={{ fontSize: 16 }}>{Math.round((100 * kumGebaut) / total)} %</strong> : null}
-              <span className="small muted">Stand {dateCH(dkey(sel))} · kumuliert über alle Scans bis zu diesem Datum</span>
-            </div>
-            <a href={`${BP}/api/baufortschritt/${sel.id}/pdf`} target="_blank" rel="noopener noreferrer">
-              <button>PDF-Protokoll</button>
-            </a>
-          </div>
-          {total ? (
-            <div style={{ marginTop: 8, height: 8, borderRadius: 4, background: "var(--panel-2)", overflow: "hidden" }}>
-              <div style={{ width: `${Math.round((100 * kumGebaut) / total)}%`, height: "100%", background: COLOR.gebaut }} />
-            </div>
-          ) : null}
+      {/* Scan-Timeline (PIX4D-Stil): alle Scans als Punkte auf der Zeitachse */}
+      <div className="panel">
+        <div className="spread" style={{ marginBottom: runs.length ? 18 : 0 }}>
+          <strong>Tages-Scans</strong>
+          <button className="primary" disabled={!model} onClick={() => setScanOpen(true)}>+ Neuer Tages-Scan</button>
         </div>
-      )}
+        {runs.length === 0 ? (
+          <div className="small muted">{model ? "Noch keine Scans — oben einen Tages-Scan hochladen." : "Zuerst Modell-Katalog anlegen, dann Tages-Scans hochladen."}</div>
+        ) : (
+          <>
+            <div style={{ position: "relative", height: 58, margin: "0 12px" }}>
+              <div style={{ position: "absolute", left: 0, right: 0, top: 12, height: 3, background: "var(--panel-2)", borderRadius: 2 }} />
+              {sel && (
+                <div style={{ position: "absolute", left: 0, width: `${timelinePos[sel.id] ?? 0}%`, top: 12, height: 3, background: COLOR.gebaut, borderRadius: 2 }} />
+              )}
+              {sortedRuns.map((r) => {
+                const active = sel?.id === r.id;
+                return (
+                  <button key={r.id} onClick={() => setSel(r)} title={`${r.scanName ?? r.name} · ${dateCH(dkey(r))}`}
+                    style={{ position: "absolute", left: `${timelinePos[r.id] ?? 0}%`, top: 0, transform: "translateX(-50%)",
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 5, width: 72,
+                      background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+                    <span style={{ width: active ? 18 : 13, height: active ? 18 : 13, marginTop: active ? 3 : 6, borderRadius: "50%",
+                      background: COLOR.gebaut, boxShadow: active ? "0 0 0 2px var(--panel), 0 0 0 4px #1f8a3e" : "0 0 0 2px var(--panel)" }} />
+                    <span className="small" style={{ fontWeight: active ? 500 : 400, whiteSpace: "nowrap" }}>{dateCH(dkey(r))}</span>
+                    <span className="small" style={{ color: COLOR.gebaut, fontWeight: active ? 500 : 400 }}>{cumPctAt(r)} %</span>
+                  </button>
+                );
+              })}
+            </div>
+            {sel && (
+              <div className="spread" style={{ marginTop: 16, paddingTop: 10, borderTop: "1px solid var(--border)", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                  <strong style={{ fontSize: 22, color: COLOR.gebaut }}>{kumGebaut}</strong>
+                  <span className="muted">von {total} gebaut</span>
+                  {total ? <strong style={{ fontSize: 16 }}>{Math.round((100 * kumGebaut) / total)} %</strong> : null}
+                  <span className="small muted">Scan {dateCH(dkey(sel))} · kumuliert bis zu diesem Datum</span>
+                </div>
+                <div className="row" style={{ display: "flex", gap: 8 }}>
+                  <button disabled={rerunning === sel.id} onClick={() => void rerun(sel)} title="Gegen aktuellen Katalog + Georef neu auswerten">
+                    {rerunning === sel.id ? "…" : "Neu auswerten"}
+                  </button>
+                  <a href={`${BP}/api/baufortschritt/${sel.id}/pdf`} target="_blank" rel="noopener noreferrer">
+                    <button>PDF-Protokoll</button>
+                  </a>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="grid" style={{ gap: 12, gridTemplateColumns: "minmax(300px, 360px) 1fr", alignItems: "start" }}>
-      {/* Linke Spalte: Steuerung (Katalog + Scan-Liste) */}
+      {/* Linke Spalte: Modell-Katalog */}
       <div className="grid" style={{ gap: 12 }}>
       {/* Modell-Katalog */}
       <div className="panel">
@@ -236,39 +285,6 @@ export function BaufortschrittPanel({
             Lade alle Etappen-IFCs (Bodenplatte + Wände …) einmal hoch. Danach täglich nur den Scan.
           </div>
         )}
-      </div>
-
-      {/* Tages-Scans */}
-      <div className="panel" style={{ padding: 0 }}>
-        <div className="spread" style={{ padding: "12px 14px" }}>
-          <strong>Tages-Scans</strong>
-          <button className="primary" disabled={!model} onClick={() => setScanOpen(true)}>+ Neuer Tages-Scan</button>
-        </div>
-        <table>
-          <thead><tr>
-            <th style={{ width: 120 }}>Datum</th><th>Scan</th>
-            <th style={{ width: 90 }}>gebaut</th><th style={{ width: 100 }}>nicht erf.</th><th style={{ width: 160 }}></th>
-          </tr></thead>
-          <tbody>
-            {runs.length === 0 && <tr><td colSpan={5} className="muted">Noch keine Scans.</td></tr>}
-            {runs.map((r) => (
-              <tr key={r.id} style={{ background: sel?.id === r.id ? "var(--panel-2)" : undefined }}>
-                <td>{dateCH(r.surveyDate ?? r.createdAt)}</td>
-                <td className="muted">{r.scanName ?? r.name}</td>
-                <td style={{ color: COLOR.gebaut }}>{r.summary?.gebaut ?? "—"}</td>
-                <td className="muted">{r.summary?.nicht_erfasst ?? "—"}</td>
-                <td>
-                  <div className="row" style={{ display: "flex", gap: 6 }}>
-                    <button onClick={() => setSel(r)}>Öffnen</button>
-                    <button disabled={rerunning === r.id} onClick={() => void rerun(r)} title="Gegen aktuellen Katalog + Georef neu auswerten">
-                      {rerunning === r.id ? "…" : "Neu auswerten"}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
       </div>
 
