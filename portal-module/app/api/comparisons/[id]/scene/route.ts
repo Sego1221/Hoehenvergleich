@@ -24,7 +24,16 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   try {
     scene = await fetchScene(c.jobId);
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 502 });
+    const msg = (e as Error).message;
+    // Compute 404 = noch keine 3D-Datengrundlage (z.B. Vergleich vor Einführung des
+    // 3D-Viewers erstellt). Sauber als 404 melden, damit der Viewer einen Hinweis zeigt.
+    if (msg.includes("Compute 404")) {
+      return NextResponse.json(
+        { error: "Für diesen Vergleich gibt es noch keine 3D-Daten. Vergleiche, die vor dem 3D-Viewer erstellt wurden, müssen neu gestartet werden." },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
 
   // binUrl/meshUrl (und legacy cloudUrl) auf die App-eigenen Proxy-Routen
