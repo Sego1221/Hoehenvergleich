@@ -23,6 +23,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (typeof body?.adresse === "string") patch.adresse = body.adresse.trim() || null;
   if (typeof body?.ort === "string") patch.ort = body.ort.trim() || null;
   if (typeof body?.notes === "string") patch.notes = body.notes;
+  // Strukturmodell-Georef (Baufortschritt): {tE,tN,tH,angleDeg} oder null.
+  if ("structureTransform" in body) {
+    const st = body.structureTransform;
+    patch.structureTransform =
+      st && typeof st === "object" && Number.isFinite(Number(st.tE)) ? {
+        tE: Number(st.tE), tN: Number(st.tN), tH: Number(st.tH),
+        angleDeg: Number(st.angleDeg ?? 0),
+      } : null;
+  }
   // Bauperimeter setzen/loeschen. perimeter = Liste von Polygonen [[ [E,N],... ],...].
   if ("perimeter" in body) {
     const p = body.perimeter;

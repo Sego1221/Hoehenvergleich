@@ -29,6 +29,9 @@ export const projects = hv.table("projects", {
   perimeter: jsonb("perimeter"),
   // Metadaten je Polygon (parallel): [{ egrid, number, ak }] (amtliche Vermessung).
   perimeterParcels: jsonb("perimeter_parcels"),
+  // Strukturmodell-Georef (Tekla lokal -> LV95) fuer das Modul Baufortschritt.
+  // { tE, tN, tH, angleDeg }. Getrennt vom Aushub (der direkt in LV95 lag).
+  structureTransform: jsonb("structure_transform"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ byNummer: index("projects_nummer_idx").on(t.projektNummer) }));
 
@@ -75,6 +78,25 @@ export const sections = hv.table("sections", {
   kind: text("kind"),                    // "laengs" | "quer" | frei
   line: jsonb("line").notNull(),         // [[E,N],...] in LV95
 });
+
+/**
+ * Baufortschritt-Lauf: ein Struktur-IFC (Etappe/Betonage) gegen einen Scan
+ * ausgewertet -> Status je Bauteil (gebaut/nicht/verdeckt) als jsonb.
+ */
+export const bfRuns = hv.table("bf_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  betonage: text("betonage"),
+  ifcName: text("ifc_name"),
+  scanName: text("scan_name"),
+  surveyDate: timestamp("survey_date", { withTimezone: true }),
+  computeJobId: text("compute_job_id"),
+  summary: jsonb("summary"),       // { n_elements, gebaut, nicht_gebaut, verdeckt }
+  elements: jsonb("elements"),     // [{ guid, betonage, kote_ok, status, frac_*, dz_mean, ... }]
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ byProject: index("bf_runs_project_idx").on(t.projectId) }));
 
 /** Gespeicherter Bereich (Polygon) für Teil-Volumen Cut/Fill. */
 export const regions = hv.table("regions", {

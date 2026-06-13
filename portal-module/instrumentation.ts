@@ -32,6 +32,25 @@ export async function register() {
       ADD COLUMN IF NOT EXISTS "perimeter" jsonb`);
     await sql.unsafe(`ALTER TABLE "hoehenvergleich"."projects"
       ADD COLUMN IF NOT EXISTS "perimeter_parcels" jsonb`);
+    // Baufortschritt: Strukturmodell-Georef + Auswertungs-Laeufe (Status je GUID).
+    await sql.unsafe(`ALTER TABLE "hoehenvergleich"."projects"
+      ADD COLUMN IF NOT EXISTS "structure_transform" jsonb`);
+    await sql.unsafe(`CREATE TABLE IF NOT EXISTS "hoehenvergleich"."bf_runs" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "project_id" uuid NOT NULL REFERENCES "hoehenvergleich"."projects"("id") ON DELETE cascade,
+      "name" text NOT NULL,
+      "betonage" text,
+      "ifc_name" text,
+      "scan_name" text,
+      "survey_date" timestamptz,
+      "compute_job_id" text,
+      "summary" jsonb,
+      "elements" jsonb,
+      "created_by" text,
+      "created_at" timestamptz DEFAULT now() NOT NULL
+    )`);
+    await sql.unsafe(`CREATE INDEX IF NOT EXISTS "bf_runs_project_idx"
+      ON "hoehenvergleich"."bf_runs" ("project_id")`);
     console.log("[hoehenvergleich] instrumentation: additive DDL ok.");
   } catch (e) {
     console.error("[hoehenvergleich] instrumentation: DDL fehlgeschlagen:", e);

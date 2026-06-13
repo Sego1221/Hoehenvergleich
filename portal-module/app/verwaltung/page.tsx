@@ -74,6 +74,7 @@ export default async function VerwaltungPage() {
                       transform={t ? { tE: t.tE, tN: t.tN, tH: t.tH, angleDeg: t.angleDeg, unit: t.unit, verifiedAt: t.verifiedAt } : null}
                       initialPerimeter={perim}
                       initialParcels={(p.perimeterParcels as { egrid: string | null; number: string | null; ak: string | null }[] | null) ?? null}
+                      structureTransform={(p.structureTransform as { tE: number; tN: number; tH: number; angleDeg: number } | null) ?? null}
                     />
                   </td>
                 </tr>
