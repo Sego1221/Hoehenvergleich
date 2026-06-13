@@ -46,6 +46,7 @@ export function BaufortschrittPanel({
   const [sel, setSel] = useState<Run | null>(initialRuns[0] ?? null);
   const [scanOpen, setScanOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const modelFileRef = useRef<HTMLInputElement>(null);
 
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -103,6 +104,17 @@ export function BaufortschrittPanel({
     finally { setBusy(false); }
   }
 
+  async function deleteModel() {
+    setBusy(true);
+    try {
+      const r = await fetch(`${BP}/api/projects/${projectId}/bf-model`, { method: "DELETE" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `Fehler ${r.status}`);
+      setModel(null); setConfirmDel(false);
+      toast("Modell-Katalog gelöscht.");
+    } catch (e) { toast((e as Error).message, "error"); }
+    finally { setBusy(false); }
+  }
+
   async function removeFile(name: string) {
     if (!model) return;
     setBusy(true);
@@ -140,6 +152,15 @@ export function BaufortschrittPanel({
             <button disabled={busy} onClick={() => modelFileRef.current?.click()}>
               {busy ? "Lädt …" : model ? "Etappen ergänzen / ersetzen" : "Etappen-IFCs hochladen"}
             </button>
+            {model && !confirmDel && <button disabled={busy} onClick={() => setConfirmDel(true)}>Modell löschen</button>}
+            {model && confirmDel && (
+              <>
+                <button className="primary" disabled={busy} onClick={() => void deleteModel()} style={{ borderColor: "var(--cut)" }}>
+                  {busy ? "Löscht …" : "Wirklich löschen"}
+                </button>
+                <button disabled={busy} onClick={() => setConfirmDel(false)}>Abbrechen</button>
+              </>
+            )}
           </div>
         </div>
         {model ? (

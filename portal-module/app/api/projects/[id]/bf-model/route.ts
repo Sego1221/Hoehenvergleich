@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { bauteilModel } from "@/lib/computeClient";
+import { bauteilModel, bauteilModelDelete } from "@/lib/computeClient";
 import { forwardTransform } from "@/lib/transform";
 
 export const runtime = "nodejs";
@@ -17,6 +17,18 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     .where(eq(schema.bfModel.projectId, params.id))
     .orderBy(desc(schema.bfModel.updatedAt)).limit(1);
   return NextResponse.json(m ?? null);
+}
+
+// Ganzen Modell-Katalog loeschen (Compute-Volume + DB-Zeile).
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const [m] = await db.select().from(schema.bfModel)
+    .where(eq(schema.bfModel.projectId, params.id))
+    .orderBy(desc(schema.bfModel.updatedAt)).limit(1);
+  if (m) {
+    try { await bauteilModelDelete(m.computeModelId); } catch { /* Volume evtl. schon weg */ }
+    await db.delete(schema.bfModel).where(eq(schema.bfModel.id, m.id));
+  }
+  return NextResponse.json({ ok: true });
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

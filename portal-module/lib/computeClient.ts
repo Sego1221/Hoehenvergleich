@@ -129,6 +129,12 @@ export async function bauteilModelFiles(modelId: string): Promise<{ files: BfMod
   return req<{ files: BfModelFile[] }>(`/bauteil/model/${modelId}/files`);
 }
 
+/** Ganzen Modell-Katalog loeschen. */
+export async function bauteilModelDelete(modelId: string): Promise<void> {
+  const r = await fetch(`${BASE}/bauteil/model/${modelId}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`Compute ${r.status}: ${await r.text()}`);
+}
+
 /** Etappen-IFC loeschen + Katalog neu aufbauen. */
 export async function bauteilModelDeleteFile(modelId: string, name: string): Promise<BfModelResult> {
   const r = await fetch(`${BASE}/bauteil/model/${modelId}/files/${encodeURIComponent(name)}`, { method: "DELETE" });

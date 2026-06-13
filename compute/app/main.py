@@ -206,6 +206,15 @@ def _list_model_files(srcdir: str) -> list[dict]:
     return out
 
 
+@app.delete("/bauteil/model/{model_id}")
+def bauteil_model_delete(model_id: str):
+    """Ganzen Modell-Katalog (Geometrie + Quell-IFCs) vom Volume entfernen."""
+    import shutil
+    d = os.path.join(build3d.data_root(), "bfmodels", os.path.basename(model_id))
+    shutil.rmtree(d, ignore_errors=True)
+    return {"ok": True}
+
+
 @app.get("/bauteil/model/{model_id}/files")
 def bauteil_model_files(model_id: str):
     """Liste der gespeicherten Etappen-IFCs des Modells."""
