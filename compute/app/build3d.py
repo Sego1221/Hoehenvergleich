@@ -55,6 +55,46 @@ def job_dir(job_id: str) -> str:
     return d
 
 
+# ----------------------------- Ergebnis-Persistenz (überlebt Restarts) -----------
+def _result_path(job_id: str) -> str:
+    d = os.path.join(data_root(), "results")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, job_id + ".npz")
+
+
+def save_result(job_id: str, result: "engine.Result") -> None:
+    """Vergleichs-Raster + Meta auf dem Volume sichern, damit Stats/Profile/Volumen/
+    dz.png/PDF nach einem Compute-Restart (RAM-Cache leer) weiter funktionieren."""
+    g = result.grid
+    p = _result_path(job_id)
+    np.savez_compressed(p, soll_z=result.soll_z, ist_z=result.ist_z, dz=result.dz,
+                        valid=result.valid,
+                        grid=np.array([g.x0, g.y0, g.res, g.nx, g.ny], dtype=np.float64))
+    try:
+        with open(p + ".meta.json", "w", encoding="utf-8") as fh:
+            json.dump(result.meta, fh, ensure_ascii=False, default=str)
+    except OSError:
+        pass
+
+
+def load_result(job_id: str):
+    """Persistiertes Ergebnis vom Volume laden (oder None)."""
+    p = _result_path(job_id)
+    if not os.path.exists(p):
+        return None
+    d = np.load(p)
+    gg = d["grid"]
+    grid = engine.Grid(float(gg[0]), float(gg[1]), float(gg[2]), int(gg[3]), int(gg[4]))
+    meta = {}
+    try:
+        with open(p + ".meta.json", "r", encoding="utf-8") as fh:
+            meta = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    return engine.Result(grid=grid, soll_z=d["soll_z"], ist_z=d["ist_z"],
+                         dz=d["dz"], valid=d["valid"], meta=meta)
+
+
 # ----------------------------- ΔZ-Farbrampe -----------------------------
 def _deviation_rgb(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
     """ΔZ -> RGB (uint16, 0..65535) per RdYlBu_r-ähnlicher Rampe. NaN -> grau."""

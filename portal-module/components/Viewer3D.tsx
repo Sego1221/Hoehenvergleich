@@ -631,7 +631,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
           <div className="panel">
             <label className="small">Punktgrösse: {pointSize.toFixed(2)} m</label>
             <div style={{ marginTop: 8 }}>
-              <Slider value={pointSize} min={0.05} max={3} step={0.05} onChange={setPointSize} />
+              <Slider value={pointSize} min={0.01} max={3} step={0.01} onChange={setPointSize} />
             </div>
           </div>
 

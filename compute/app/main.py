@@ -75,6 +75,11 @@ def _store(result: engine.Result) -> str:
 def _get(job_id: str) -> engine.Result:
     r = _RESULTS.get(job_id)
     if r is None:
+        # Vom Volume nachladen (überlebt Compute-Restart / RAM-Cache-Verlust).
+        r = build3d.load_result(job_id)
+        if r is not None:
+            _RESULTS[job_id] = r
+    if r is None:
         raise HTTPException(404, "Job nicht gefunden (evtl. abgelaufen). Vergleich erneut starten.")
     return r
 
@@ -140,6 +145,10 @@ async def compare(
         )
     # Upload-Quellen bleiben erhalten (build3d liest sie erneut); Cleanup via _evict.
     jid = _store(result)
+    try:
+        build3d.save_result(jid, result)   # Volume-Persistenz (Restart-fest)
+    except Exception:
+        pass
     g = result.grid
     return {"job_id": jid, "stats": engine.stats(result, tol),
             "extent": g.extent, "grid": {"nx": g.nx, "ny": g.ny, "res": g.res},
