@@ -62,10 +62,12 @@ function rampColor(stops: Stops, t: number): RGB {
 function gradientCss(stops: Stops): string {
   return "linear-gradient(90deg," + stops.map((s) => `rgb(${s[0]|0},${s[1]|0},${s[2]|0})`).join(",") + ")";
 }
-/** Farb-Buffer (uint8 0..255) für die Wolke berechnen: ΔZ-Rampe oder Echtfarbe. */
+/** Farb-Buffer (uint8 0..255) für die Wolke berechnen: ΔZ-Rampe oder Echtfarbe.
+ *  lo = Untergrenze (zu tief, i. d. R. negativ), hi = Obergrenze (zu hoch). Die
+ *  Skala wird linear von lo..hi auf die Farbrampe abgebildet (asymmetrisch). */
 function computeCloudColors(
   count: number, dev: Float32Array | null, rgb: Uint8Array | null,
-  mode: ColorMode, range: number, stops: Stops, out?: Uint8Array,
+  mode: ColorMode, lo: number, hi: number, stops: Stops, out?: Uint8Array,
 ): Uint8Array {
   const col = out ?? new Uint8Array(count * 3);
   if (mode === "rgb" || !dev) {
@@ -73,11 +75,12 @@ function computeCloudColors(
     else col.fill(180);
     return col;
   }
-  const inv = 1 / (2 * (range || 0.0001));
+  const span = (hi - lo) || 0.0001;
+  const inv = 1 / span;
   for (let i = 0; i < count; i++) {
     const d = dev[i];
     if (!Number.isFinite(d)) { col[i * 3] = 150; col[i * 3 + 1] = 150; col[i * 3 + 2] = 150; continue; }
-    const c = rampColor(stops, (d + range) * inv);
+    const c = rampColor(stops, (d - lo) * inv);
     col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
   }
   return col;
@@ -115,7 +118,8 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   const [pointSize, setPointSize] = useState(0.5);
   const pointSizeRef = useRef(0.5);
   const [colorMode, setColorMode] = useState<ColorMode>("dz");
-  const [dzRange, setDzRange] = useState(0.3);
+  const [dzMin, setDzMin] = useState(-0.3); // Untergrenze (zu tief)
+  const [dzMax, setDzMax] = useState(0.3);  // Obergrenze (zu hoch)
   const [stops, setStops] = useState<Stops>(PRESETS[0].stops);
   const stopsRef = useRef<Stops>(PRESETS[0].stops);
   const [toolsOpen, setToolsOpen] = useState(true);   // Werkzeug-Spalte ein/aus
@@ -307,7 +311,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
 
     // Anfangsfarbe: bei v2 nach ΔZ, sonst die (gebackene) Echtfarbe.
     const initialMode: ColorMode = dev ? "dz" : "rgb";
-    const colArr = computeCloudColors(count, dev, rgb, initialMode, dzRange, stopsRef.current);
+    const colArr = computeCloudColors(count, dev, rgb, initialMode, dzMin, dzMax, stopsRef.current);
     colorArrRef.current = colArr;
 
     const geom = new THREE.BufferGeometry();
@@ -327,11 +331,11 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   }
 
   // Wolke clientseitig neu einfärben (ΔZ-Skala/Farben oder Echtfarbe), ohne Neuladen.
-  function applyCloudColors(mode: ColorMode, range: number, st: Stops) {
+  function applyCloudColors(mode: ColorMode, lo: number, hi: number, st: Stops) {
     const pts = pointsRef.current;
     const arr = colorArrRef.current;
     if (!pts || !arr) return;
-    computeCloudColors(cloudCountRef.current, devRef.current, rgbRef.current, mode, range, st, arr);
+    computeCloudColors(cloudCountRef.current, devRef.current, rgbRef.current, mode, lo, hi, st, arr);
     (pts.geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
   }
 
@@ -429,9 +433,9 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   // ------------------------------------------- Einfärbung (live) -------------
   useEffect(() => {
     stopsRef.current = stops;
-    applyCloudColors(colorMode, dzRange, stops);
+    applyCloudColors(colorMode, dzMin, dzMax, stops);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode, dzRange, stops, ready]);
+  }, [colorMode, dzMin, dzMax, stops, ready]);
 
   // ------------------------------------------- Vollbild ----------------------
   useEffect(() => {
@@ -644,12 +648,12 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
                 padding: "8px 10px", fontSize: 11, lineHeight: 1.4, maxWidth: 260,
               }}
             >
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>Abweichung ΔZ ±{dzRange.toFixed(2)} m</div>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Abweichung ΔZ (m)</div>
               <div
                 style={{ height: 8, borderRadius: 4, marginBottom: 4, background: gradientCss(stops) }}
               />
               <div className="spread" style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>−{dzRange.toFixed(2)} (zu tief)</span><span>0</span><span>+{dzRange.toFixed(2)} (zu hoch)</span>
+                <span>{dzMin.toFixed(2)} (zu tief)</span><span>0</span><span>+{dzMax.toFixed(2)} (zu hoch)</span>
               </div>
             </div>
           )}
@@ -705,9 +709,34 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
             </div>
             {colorMode === "dz" && (
               <div style={{ marginTop: 10 }}>
-                <label className="small">Skala ±{(dzRange * 100).toFixed(0)} cm</label>
+                <div className="spread">
+                  <label className="small">Untergrenze (zu tief)</label>
+                  <span className="small muted">{(dzMin * 100).toFixed(0)} cm</span>
+                </div>
                 <div style={{ marginTop: 6 }}>
-                  <Slider value={dzRange} min={0.01} max={2} step={0.01} onChange={setDzRange} />
+                  <Slider
+                    value={dzMin} min={-2} max={-0.01} step={0.01}
+                    onChange={(v) => setDzMin(Math.min(v, dzMax - 0.01))}
+                  />
+                </div>
+
+                <div className="spread" style={{ marginTop: 10 }}>
+                  <label className="small">Obergrenze (zu hoch)</label>
+                  <span className="small muted">+{(dzMax * 100).toFixed(0)} cm</span>
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <Slider
+                    value={dzMax} min={0.01} max={2} step={0.01}
+                    onChange={(v) => setDzMax(Math.max(v, dzMin + 0.01))}
+                  />
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    onClick={() => { const a = Math.max(Math.abs(dzMin), dzMax); setDzMin(-a); setDzMax(a); }}
+                    style={{ width: "100%" }}
+                  >
+                    Symmetrisch (±{(Math.max(Math.abs(dzMin), dzMax) * 100).toFixed(0)} cm)
+                  </button>
                 </div>
 
                 <label className="small" style={{ display: "block", marginTop: 10 }}>Farbskala</label>
