@@ -32,6 +32,34 @@ export function PerimeterPanel({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Adresssuche.
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<{ label: string; e: number; n: number }[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [focus, setFocus] = useState<{ e: number; n: number } | null>(null);
+
+  async function search() {
+    const text = q.trim();
+    if (text.length < 2) return;
+    setSearching(true);
+    try {
+      const r = await fetch(`${BP}/api/cadastral/search?q=${encodeURIComponent(text)}`, { cache: "no-store" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? `Fehler ${r.status}`);
+      setResults(data.results ?? []);
+      if (!data.results?.length) toast("Keine Treffer.", "error");
+    } catch (err) {
+      toast((err as Error).message, "error");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function goTo(res: { label: string; e: number; n: number }) {
+    setFocus({ e: res.e, n: res.n });   // neue Referenz -> Karte fliegt hin
+    setResults([]);
+    setQ(res.label);
+  }
 
   async function onPick(e: number, n: number) {
     setBusy(true);
@@ -119,9 +147,33 @@ export function PerimeterPanel({
       </div>
 
       <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 280px", alignItems: "start" }}>
-        <PerimeterMap perimeter={perimeter} mode={mode} onPick={onPick} onDrawn={onDrawn} />
+        <PerimeterMap perimeter={perimeter} mode={mode} onPick={onPick} onDrawn={onDrawn} focus={focus} />
 
         <div className="grid" style={{ gap: 10 }}>
+          {/* Adresssuche */}
+          <div className="grid" style={{ gap: 6 }}>
+            <div className="row" style={{ display: "flex", gap: 6 }}>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }}
+                placeholder="Adresse / Ort suchen"
+                autoComplete="off"
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <button onClick={() => void search()} disabled={searching}>{searching ? "…" : "Suchen"}</button>
+            </div>
+            {results.length > 0 && (
+              <div className="grid" style={{ gap: 2 }}>
+                {results.map((res, i) => (
+                  <button key={i} className="small" style={{ textAlign: "left" }} onClick={() => goTo(res)}>
+                    {res.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="grid cols-2">
             <button className={mode === "parcel" ? "primary" : ""} onClick={() => setMode(mode === "parcel" ? "view" : "parcel")}>
               Parzelle

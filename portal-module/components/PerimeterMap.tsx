@@ -22,6 +22,9 @@ type Props = {
   mode: PMapMode;
   onPick: (e: number, n: number) => void;
   onDrawn: (pts: [number, number][]) => void;
+  /** Karte auf diese LV95-Koordinate zentrieren (Adresssuche). Bei jeder neuen
+   *  Referenz wird hingeflogen (auch identische Werte erneut moeglich). */
+  focus?: { e: number; n: number } | null;
 };
 
 const RESOLUTIONS = [
@@ -124,6 +127,11 @@ export default function PerimeterMap(props: Props) {
 
   useEffect(() => { modeRef.current = props.mode; draftRef.current = []; redraw(); }, [props.mode]); // eslint-disable-line
   useEffect(() => { if (ready) { redraw(); fitPerimeter(); } }, [props.perimeter, ready]); // eslint-disable-line
+  // Adresssuche -> hinfliegen.
+  useEffect(() => {
+    if (!ready || !props.focus || !mapRef.current) return;
+    try { mapRef.current.flyTo(enToLatLng(props.focus.e, props.focus.n), 24, { duration: 0.6 }); } catch { /* ignore */ }
+  }, [props.focus, ready]); // eslint-disable-line
 
   function fitPerimeter() {
     const map = mapRef.current;
