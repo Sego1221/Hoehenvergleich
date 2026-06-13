@@ -159,7 +159,32 @@ export function BaufortschrittPanel({
   }
 
   return (
-    <div className="grid" style={{ gap: 14 }}>
+    <div className="grid" style={{ gap: 12 }}>
+      {/* Fortschritt: immer zuoberst, gross und ohne Scrollen sichtbar */}
+      {sel && (
+        <div className="panel" style={{ padding: "10px 14px" }}>
+          <div className="spread" style={{ alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 22, color: COLOR.gebaut }}>{kumGebaut}</strong>
+              <span className="muted">von {total} Bauteilen gebaut</span>
+              {total ? <strong style={{ fontSize: 16 }}>{Math.round((100 * kumGebaut) / total)} %</strong> : null}
+              <span className="small muted">Stand {dateCH(dkey(sel))} · kumuliert über alle Scans bis zu diesem Datum</span>
+            </div>
+            <a href={`${BP}/api/baufortschritt/${sel.id}/pdf`} target="_blank" rel="noopener noreferrer">
+              <button>PDF-Protokoll</button>
+            </a>
+          </div>
+          {total ? (
+            <div style={{ marginTop: 8, height: 8, borderRadius: 4, background: "var(--panel-2)", overflow: "hidden" }}>
+              <div style={{ width: `${Math.round((100 * kumGebaut) / total)}%`, height: "100%", background: COLOR.gebaut }} />
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <div className="grid" style={{ gap: 12, gridTemplateColumns: "minmax(300px, 360px) 1fr", alignItems: "start" }}>
+      {/* Linke Spalte: Steuerung (Katalog + Scan-Liste) */}
+      <div className="grid" style={{ gap: 12 }}>
       {/* Modell-Katalog */}
       <div className="panel">
         <div className="spread">
@@ -211,23 +236,6 @@ export function BaufortschrittPanel({
             Lade alle Etappen-IFCs (Bodenplatte + Wände …) einmal hoch. Danach täglich nur den Scan.
           </div>
         )}
-        {model && showPreview && (
-          <div style={{ marginTop: 10 }}>
-            <div className="small muted" style={{ marginBottom: 6 }}>
-              Ganzes Modell (alle Etappen) zur Kontrolle: lädt alles vollständig, sind Bauteile/Form plausibel?
-              (oben rechts „Material/Status"). Georef-Lage prüfst du über „Neu auswerten" eines Scans.
-            </div>
-            <StatusViewer3D
-              url={`${BP}/api/projects/${projectId}/bf-model/preview.glb`}
-              statusByGuid={{}}
-              guids={(model.elements ?? []).map((e) => e.guid)}
-              defaultMode="material"
-              height={420}
-              perimeter={perimeter}
-              offset={model.offset}
-            />
-          </div>
-        )}
       </div>
 
       {/* Tages-Scans */}
@@ -262,21 +270,29 @@ export function BaufortschrittPanel({
           </tbody>
         </table>
       </div>
+      </div>
 
-      {sel && (
-        <>
-          <div className="spread">
+      {/* Rechte Spalte: Modell-Vorschau (Kontrolle) ODER Viewer + Bauteil-Tabelle */}
+      {model && showPreview ? (
+          <div className="grid" style={{ gap: 6 }}>
             <div className="small muted">
-              Stand {dateCH(dkey(sel))}: <b style={{ color: COLOR.gebaut }}>{kumGebaut}</b> von {total} Bauteilen gebaut
-              {total ? ` (${Math.round((100 * kumGebaut) / total)} %)` : ""} · kumuliert über alle Scans bis zu diesem Datum.
+              Ganzes Modell (alle Etappen) zur Kontrolle — oben rechts „Material/Status" und Perimeter-Umschalter.
+              Georef-Lage prüfst du über „Neu auswerten" eines Scans.
             </div>
-            <a href={`${BP}/api/baufortschritt/${sel.id}/pdf`} target="_blank" rel="noopener noreferrer">
-              <button>PDF-Protokoll</button>
-            </a>
+            <StatusViewer3D
+              url={`${BP}/api/projects/${projectId}/bf-model/preview.glb`}
+              statusByGuid={{}}
+              guids={(model.elements ?? []).map((e) => e.guid)}
+              defaultMode="material"
+              height={560}
+              perimeter={perimeter}
+              offset={model.offset}
+            />
           </div>
-          <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 1fr", alignItems: "start" }}>
-            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} perimeter={perimeter} offset={sel.offset} />
-            <div className="panel" style={{ padding: 0, maxHeight: 480, overflowY: "auto" }}>
+      ) : sel ? (
+          <div className="grid" style={{ gap: 12, gridTemplateColumns: "1.4fr 1fr", alignItems: "start" }}>
+            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} perimeter={perimeter} offset={sel.offset} height={560} />
+            <div className="panel" style={{ padding: 0, maxHeight: 560, overflowY: "auto" }}>
               <div className="spread" style={{ padding: "10px 12px" }}>
                 <strong className="small">Bauteile</strong>
                 <span className="small muted">Status korrigierbar</span>
@@ -311,8 +327,13 @@ export function BaufortschrittPanel({
               </table>
             </div>
           </div>
-        </>
+      ) : (
+        <div className="panel muted" style={{ display: "grid", placeItems: "center", minHeight: 220, textAlign: "center", padding: 20 }}>
+          Links einen Tages-Scan über „Öffnen" wählen, um Status + 3D-Ansicht zu sehen.
+          {!model && <><br />Zuerst Etappen-IFCs hochladen.</>}
+        </div>
       )}
+      </div>
 
       {scanOpen && model && (
         <NewScanDialog projectId={projectId} onClose={() => setScanOpen(false)}
