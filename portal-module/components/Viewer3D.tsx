@@ -624,9 +624,9 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
             </div>
             {colorMode === "dz" && (
               <div style={{ marginTop: 10 }}>
-                <label className="small">Skala ±{dzRange.toFixed(2)} m</label>
+                <label className="small">Skala ±{(dzRange * 100).toFixed(0)} cm</label>
                 <div style={{ marginTop: 6 }}>
-                  <Slider value={dzRange} min={0.05} max={2} step={0.05} onChange={setDzRange} />
+                  <Slider value={dzRange} min={0.01} max={2} step={0.01} onChange={setDzRange} />
                 </div>
               </div>
             )}
