@@ -123,12 +123,12 @@ export default function PerimeterMap(props: Props) {
     // Angrenzende Parzellen verschmelzen -> keine Innenkanten.
     for (const poly of dissolvePerimeter(perimRef.current)) {
       const rings = poly.map((ring) => ring.map(([e, n]) => enToLatLng(e, n)));
-      L.polygon(rings as any, { color: "#ff8c1a", weight: 2, fillOpacity: 0.12 }).addTo(layer);
+      L.polygon(rings as any, { color: "#ff00ff", weight: 2, fillOpacity: 0.12 }).addTo(layer);
     }
     const d = draftRef.current;
     if (d.length) {
       const ll = d.map(([e, n]) => enToLatLng(e, n));
-      L.polygon(ll as any, { color: "#ff8c1a", weight: 2, dashArray: "4 4", fillOpacity: 0.05 }).addTo(layer);
+      L.polygon(ll as any, { color: "#ff00ff", weight: 2, dashArray: "4 4", fillOpacity: 0.05 }).addTo(layer);
       ll.forEach((p: any) => L.circleMarker(p, { radius: 3, color: "#fff" }).addTo(layer));
     }
   }

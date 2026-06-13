@@ -642,7 +642,7 @@ export function Viewer3D({
     const off = offset();
     if (!scene || !off || perimeterRef.current.length === 0) return;
     const group = new THREE.Group();
-    const mat = new THREE.LineBasicMaterial({ color: 0xff8c1a });
+    const mat = new THREE.LineBasicMaterial({ color: 0xff00ff });
     const z = planZRef.current;
     // Angrenzende Parzellen verschmelzen -> nur Aussenkanten (+ evtl. Loecher).
     for (const poly of dissolvePerimeter(perimeterRef.current)) {
@@ -724,7 +724,7 @@ export function Viewer3D({
     if (!scene) return;
     drawPtsRef.current.push(p.clone());
     const g = new THREE.SphereGeometry(radiusRef.current * 0.008, 10, 10);
-    const m = new THREE.MeshBasicMaterial({ color: 0xff8c1a });
+    const m = new THREE.MeshBasicMaterial({ color: 0xff00ff });
     const s = new THREE.Mesh(g, m);
     s.position.copy(p);
     scene.add(s);
@@ -733,7 +733,7 @@ export function Viewer3D({
     if (drawPtsRef.current.length >= 2) {
       const line = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(drawPtsRef.current),
-        new THREE.LineBasicMaterial({ color: 0xff8c1a }),
+        new THREE.LineBasicMaterial({ color: 0xff00ff }),
       );
       scene.add(line);
       drawTmpRef.current.push(line);
