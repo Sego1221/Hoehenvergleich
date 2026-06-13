@@ -77,12 +77,15 @@ async def compare(
 ):
     """Soll-Modell (IFC oder TIN) + Punktwolke (Ist) hochladen -> Vergleich. Gibt job_id + Statistik + Extent."""
     tf = json.loads(transform) if transform.strip() else None
+    # Datei-Typ-Prüfung temporär abschaltbar (Env HV_SKIP_TYPE_CHECK=1) — nur zum
+    # Testen; zur Laufzeit gelesen, damit Ein/Aus per Env-Toggle ohne Code reicht.
+    skip_type = os.environ.get("HV_SKIP_TYPE_CHECK") == "1"
     soll_ext = os.path.splitext(soll.filename or "")[1].lower()
-    if soll_ext not in _SOLL_EXT:
+    if not skip_type and soll_ext not in _SOLL_EXT:
         raise HTTPException(415, f"Soll-Format {soll_ext!r} nicht unterstützt. Erlaubt: {sorted(_SOLL_EXT)}")
     ifc_path = await _save_upload(soll, soll_ext)
     ist_ext = os.path.splitext(cloud.filename or "")[1].lower()
-    if ist_ext not in {".laz", ".las", ".tif", ".tiff", ".gtiff"}:
+    if not skip_type and ist_ext not in {".laz", ".las", ".tif", ".tiff", ".gtiff"}:
         raise HTTPException(415, f"Ist-Format {ist_ext!r} nicht unterstützt. Erlaubt: LAZ/LAS oder DSM-GeoTIFF.")
     cloud_path = await _save_upload(cloud, ist_ext)
     try:
