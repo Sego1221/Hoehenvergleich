@@ -51,9 +51,11 @@ export default function StatusViewer3D({
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     el.appendChild(renderer.domElement);
-    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0f1115);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x404050, 1.2));
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0xeef2f6);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xc8d0d8, 1.1));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     const dir = new THREE.DirectionalLight(0xffffff, 0.7); dir.position.set(1, 1, 2); scene.add(dir);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 0.4); dir2.position.set(-1, -1, 1); scene.add(dir2);
     for (const s of STATUSES) matsRef.current[s.key] = new THREE.MeshStandardMaterial({ color: s.color, metalness: 0, roughness: 0.9, side: THREE.DoubleSide });
     const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100000); cam.up.set(0, 0, 1);
     const controls = new OrbitControls(cam, renderer.domElement); controls.enableDamping = true;
