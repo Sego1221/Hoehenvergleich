@@ -58,6 +58,19 @@ export async function register() {
       ON "hoehenvergleich"."bf_runs" ("project_id")`);
     await sql.unsafe(`ALTER TABLE "hoehenvergleich"."bf_runs"
       ADD COLUMN IF NOT EXISTS "overrides" jsonb`);
+    // Modell-Katalog pro Projekt (Baufortschritt v2).
+    await sql.unsafe(`CREATE TABLE IF NOT EXISTS "hoehenvergleich"."bf_model" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "project_id" uuid NOT NULL REFERENCES "hoehenvergleich"."projects"("id") ON DELETE cascade,
+      "compute_model_id" text NOT NULL,
+      "n_elements" integer,
+      "betonagen" jsonb,
+      "elements" jsonb,
+      "ifc_names" jsonb,
+      "updated_at" timestamptz DEFAULT now() NOT NULL
+    )`);
+    await sql.unsafe(`CREATE INDEX IF NOT EXISTS "bf_model_project_idx"
+      ON "hoehenvergleich"."bf_model" ("project_id")`);
     console.log("[hoehenvergleich] instrumentation: additive DDL ok.");
   } catch (e) {
     console.error("[hoehenvergleich] instrumentation: DDL fehlgeschlagen:", e);

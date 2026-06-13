@@ -84,8 +84,24 @@ export const sections = hv.table("sections", {
 });
 
 /**
- * Baufortschritt-Lauf: ein Struktur-IFC (Etappe/Betonage) gegen einen Scan
- * ausgewertet -> Status je Bauteil (gebaut/nicht/verdeckt) als jsonb.
+ * Baufortschritt-Modell-Katalog pro Projekt: alle Etappen-IFCs einmal zu einem
+ * Bauteil-Katalog zusammengefuehrt (Geometrie liegt auf dem Compute-Volume unter
+ * computeModelId). Tages-Scans (bf_runs) werten gegen diesen Katalog aus.
+ */
+export const bfModel = hv.table("bf_model", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  computeModelId: text("compute_model_id").notNull(),
+  nElements: integer("n_elements"),
+  betonagen: jsonb("betonagen"),   // string[]
+  elements: jsonb("elements"),     // [{ guid, name, bauteil, betonage, material, kote_ok, kote_uk }]
+  ifcNames: jsonb("ifc_names"),    // string[] der hochgeladenen Etappen
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ byProject: index("bf_model_project_idx").on(t.projectId) }));
+
+/**
+ * Baufortschritt-Lauf = ein Tages-Scan gegen den Modell-Katalog ausgewertet ->
+ * Status je Bauteil (gebaut/nicht/verdeckt/nicht_erfasst) als jsonb.
  */
 export const bfRuns = hv.table("bf_runs", {
   id: uuid("id").primaryKey().defaultRandom(),

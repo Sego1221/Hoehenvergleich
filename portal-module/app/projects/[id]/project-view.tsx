@@ -10,18 +10,22 @@ import type { BauteilRow } from "@/lib/computeClient";
 
 type Comp = { id: string; name: string; surveyDate: string | null; stats: Record<string, number> | null };
 type Run = {
-  id: string; name: string; betonage: string | null; scanName: string | null;
-  surveyDate: string | null; createdAt: string;
-  summary: { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number } | null;
+  id: string; name: string; scanName: string | null; surveyDate: string | null; createdAt: string;
+  summary: { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number; nicht_erfasst?: number } | null;
   elements: BauteilRow[] | null;
   overrides: Record<string, string> | null;
 };
+type Model = {
+  id: string; computeModelId: string; nElements: number | null;
+  betonagen: string[] | null; ifcNames: string[] | null;
+  elements: { guid: string | null; name: string | null; betonage: string | null }[] | null;
+} | null;
 
 export function ProjectView({
-  projectId, initialComparisons, hasTransform, hasStructTransform, initialRuns,
+  projectId, initialComparisons, hasTransform, initialModel, initialRuns,
 }: {
   projectId: string; initialComparisons: Comp[]; hasTransform: boolean;
-  hasStructTransform: boolean; initialRuns: Run[];
+  initialModel: Model; initialRuns: Run[];
 }) {
   const [tab, setTab] = useState<"vergleiche" | "baufortschritt">("vergleiche");
   return (
@@ -33,7 +37,7 @@ export function ProjectView({
       {tab === "vergleiche" ? (
         <HistoryAndCompare projectId={projectId} initialComparisons={initialComparisons} hasTransform={hasTransform} />
       ) : (
-        <BaufortschrittPanel projectId={projectId} hasStructTransform={hasStructTransform} initialRuns={initialRuns} />
+        <BaufortschrittPanel projectId={projectId} hasTransform={hasTransform} initialModel={initialModel} initialRuns={initialRuns} />
       )}
     </div>
   );

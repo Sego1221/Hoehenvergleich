@@ -31,7 +31,14 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     .select()
     .from(schema.bfRuns)
     .where(eq(schema.bfRuns.projectId, params.id))
-    .orderBy(desc(schema.bfRuns.createdAt));
+    .orderBy(desc(schema.bfRuns.surveyDate), desc(schema.bfRuns.createdAt));
+
+  const [bfModelRow] = await db
+    .select()
+    .from(schema.bfModel)
+    .where(eq(schema.bfModel.projectId, params.id))
+    .orderBy(desc(schema.bfModel.updatedAt))
+    .limit(1);
 
   return (
     <div className="grid" style={{ gap: 18 }}>
@@ -48,7 +55,14 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       <ProjectView
         projectId={params.id}
         hasTransform={!!transform}
-        hasStructTransform={!!transform}
+        initialModel={bfModelRow ? {
+          id: bfModelRow.id,
+          computeModelId: bfModelRow.computeModelId,
+          nElements: bfModelRow.nElements,
+          betonagen: bfModelRow.betonagen as string[] | null,
+          ifcNames: bfModelRow.ifcNames as string[] | null,
+          elements: bfModelRow.elements as { guid: string | null; name: string | null; betonage: string | null }[] | null,
+        } : null}
         initialComparisons={comparisons.map((c) => ({
           id: c.id,
           name: c.name,

@@ -115,6 +115,32 @@ export async function bauteilEvaluate(
 /** Status-GLB eines Baufortschritt-Laufs (vom Compute-Volume). */
 export const statusGlbUrl = (jobId: string) => `${BASE}/jobs/${jobId}/status.glb`;
 
+export type BfModelResult = {
+  model_id: string; n_elements: number; betonagen: string[];
+  elements: { guid: string | null; name: string | null; bauteil: string | null;
+    betonage: string | null; material: string | null; kote_ok: string | null; kote_uk: string | null }[];
+};
+
+/** Modell-Katalog anlegen/ergaenzen: mehrere IFCs + Projekt-Georef (forward). */
+export async function bauteilModel(
+  files: { blob: Blob; name: string }[],
+  transform: { tE: number; tN: number; tH: number; angle_deg: number },
+  modelId?: string,
+): Promise<BfModelResult> {
+  const fd = new FormData();
+  for (const f of files) fd.append("ifcs", f.blob, f.name);
+  fd.append("transform", JSON.stringify(transform));
+  if (modelId) fd.append("model_id", modelId);
+  return req<BfModelResult>("/bauteil/model", { method: "POST", body: fd });
+}
+
+/** Tages-Scan gegen einen Modell-Katalog auswerten. */
+export async function bauteilScan(modelId: string, cloud: Blob, cloudName: string): Promise<BauteilResult> {
+  const fd = new FormData();
+  fd.append("cloud", cloud, cloudName);
+  return req<BauteilResult>(`/bauteil/model/${modelId}/scan`, { method: "POST", body: fd });
+}
+
 /** Eine aus DXF gelesene Polylinie (Bauperimeter/Bereich). */
 export type DxfPolyline = {
   layer: string; closed: boolean; n: number;

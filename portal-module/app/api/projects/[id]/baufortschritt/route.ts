@@ -9,8 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { bauteilEvaluate } from "@/lib/computeClient";
-import { forwardTransform } from "@/lib/transform";
+import { bauteilScan } from "@/lib/computeClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,51 +19,40 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     .select()
     .from(schema.bfRuns)
     .where(eq(schema.bfRuns.projectId, params.id))
-    .orderBy(desc(schema.bfRuns.createdAt));
+    .orderBy(desc(schema.bfRuns.surveyDate), desc(schema.bfRuns.createdAt));
   return NextResponse.json(rows);
 }
 
+// Tages-Scan gegen den Modell-Katalog des Projekts auswerten.
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const [project] = await db.select().from(schema.projects).where(eq(schema.projects.id, params.id));
-  if (!project) return NextResponse.json({ error: "Projekt nicht gefunden." }, { status: 404 });
-  // Gemeinsame Projekt-Georef (gleiche wie Aushub). Lokales Tekla-Modell wird
-  // transformiert; Richtung/Vorzeichen via forwardTransform aufgeloest.
-  const [trow] = await db
-    .select()
-    .from(schema.projectTransforms)
-    .where(eq(schema.projectTransforms.projectId, params.id))
-    .orderBy(desc(schema.projectTransforms.createdAt))
-    .limit(1);
-  if (!trow) {
+  const [model] = await db.select().from(schema.bfModel)
+    .where(eq(schema.bfModel.projectId, params.id))
+    .orderBy(desc(schema.bfModel.updatedAt)).limit(1);
+  if (!model) {
     return NextResponse.json(
-      { error: "Keine Georef-Transformation hinterlegt (Verwaltung → Projekt bearbeiten)." },
+      { error: "Kein Modell-Katalog vorhanden — zuerst Etappen-IFCs hochladen." },
       { status: 400 },
     );
   }
-  const fwd = forwardTransform(trow);
-  const tf = { tE: fwd.tE, tN: fwd.tN, tH: fwd.tH, angleDeg: fwd.angle_deg };
 
   const form = await req.formData().catch(() => null);
-  const ifc = form?.get("ifc");
   const scan = form?.get("scan");
-  if (!(ifc instanceof Blob) || !(scan instanceof Blob)) {
-    return NextResponse.json({ error: "Felder 'ifc' und 'scan' erforderlich." }, { status: 400 });
+  if (!(scan instanceof Blob)) {
+    return NextResponse.json({ error: "Feld 'scan' (LAZ/LAS) erforderlich." }, { status: 400 });
   }
-  const ifcName = (ifc as File).name ?? "modell.ifc";
   const scanName = (scan as File).name ?? "scan.laz";
-  const name = String(form?.get("name") ?? "").trim() || ifcName.replace(/\.[^.]+$/, "");
-  const betonage = String(form?.get("betonage") ?? "").trim() || null;
   const surveyDate = String(form?.get("surveyDate") ?? "").trim();
+  const name = String(form?.get("name") ?? "").trim() || (surveyDate || scanName);
 
   let result;
   try {
-    result = await bauteilEvaluate(ifc, ifcName, scan, scanName, tf);
+    result = await bauteilScan(model.computeModelId, scan, scanName);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
   if (result.transform_warning) {
     return NextResponse.json(
-      { error: "Strukturmodell liegt nicht in der Wolke (Georef prüfen — Vorzeichen/Werte)." },
+      { error: "Modell liegt nicht in der Wolke (Georef prüfen — Vorzeichen/Werte)." },
       { status: 422 },
     );
   }
@@ -74,8 +62,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .values({
       projectId: params.id,
       name,
-      betonage,
-      ifcName,
       scanName,
       surveyDate: surveyDate ? new Date(surveyDate) : null,
       computeJobId: result.job_id,
