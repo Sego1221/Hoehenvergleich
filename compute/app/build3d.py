@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -64,6 +65,55 @@ def _deviation_rgb(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
     rgb = (rgba[:, :3] * 65535.0).astype(np.uint16)
     rgb[~np.isfinite(dev)] = 32768  # aussen/keine Soll-Fläche -> neutralgrau
     return rgb
+
+
+def _deviation_rgb_u8(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
+    """ΔZ -> RGB (uint8, 0..255) per RdYlBu_r-Rampe. NaN -> grau."""
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+    norm = mcolors.Normalize(vmin=-clip, vmax=clip, clip=True)
+    rgba = mpl.colormaps["RdYlBu_r"](norm(np.nan_to_num(dev, nan=0.0)))
+    rgb = (rgba[:, :3] * 255.0).astype(np.uint8)
+    rgb[~np.isfinite(dev)] = 150  # aussen/keine Soll-Fläche -> neutralgrau
+    return rgb
+
+
+# ----------------------------- Kompakte Binär-Wolke (Three.js-Viewer) -----------------------------
+def export_cloud_bin(result: engine.Result, out_path: str,
+                     max_points: int = 1_500_000, clip: float = 0.30) -> dict:
+    """Ausgedünnte Wolke als kompaktes Binärformat für den Three.js-Viewer.
+
+    Format (little-endian): uint32 count M, dann M*3 float32 Positionen (relativ
+    zum Offset, float32-tauglich), dann M*3 uint8 RGB (ΔZ-Rampe). Kein Potree nötig.
+    Offset = Floor der Wolken-Min-Ecke (auch für das Soll-GLB verwenden).
+    """
+    cloud_path = result.meta.get("cloud_path")
+    if not cloud_path or not os.path.exists(cloud_path):
+        raise ValueError("Quell-Punktwolke nicht verfügbar (cloud_path fehlt).")
+    from . import georef
+    xyz, _ = engine.load_cloud(cloud_path)
+    xyz, _ = georef.georeference(xyz, result.meta.get("cloud_transform"))
+    dev = engine.point_deviations(result, xyz).astype(np.float32)
+    offset = np.floor(xyz.min(axis=0))
+    bbox_min = xyz.min(axis=0).tolist(); bbox_max = xyz.max(axis=0).tolist()
+
+    n = xyz.shape[0]
+    if n > max_points:                       # deterministisches Stride-Subsampling
+        step = int(np.ceil(n / max_points))
+        xyz = xyz[::step]; dev = dev[::step]
+    pos = (xyz - offset).astype(np.float32)
+    col = _deviation_rgb_u8(dev, clip)
+    m = pos.shape[0]
+    with open(out_path, "wb") as fh:
+        fh.write(struct.pack("<I", m))
+        fh.write(np.ascontiguousarray(pos).tobytes())
+        fh.write(np.ascontiguousarray(col).tobytes())
+    fin = dev[np.isfinite(dev)]
+    return {"count": m, "total": int(n), "bytes": int(os.path.getsize(out_path)),
+            "offset": offset.tolist(), "bbox_min": bbox_min, "bbox_max": bbox_max,
+            "deviation_min": float(fin.min()) if fin.size else None,
+            "deviation_max": float(fin.max()) if fin.size else None,
+            "deviation_median": float(np.median(fin)) if fin.size else None}
 
 
 # ----------------------------- LAS-Export mit deviation -----------------------------
@@ -172,51 +222,58 @@ def run_potree(in_las: str, out_dir: str) -> dict:
 
 # ----------------------------- Orchestrator -----------------------------
 def build(result: engine.Result, job_id: str, *, bake_rgb: bool = True,
-          clip: float = 0.30, force: bool = False) -> dict:
-    """Octree + GLB + scene.json erzeugen (idempotent, cached auf Volume)."""
+          clip: float = 0.30, force: bool = False, potree: bool = False) -> dict:
+    """3D-Datengrundlage erzeugen (idempotent, cached auf Volume).
+
+    SCHNELL (v1): nur cloud.bin (Three.js-Viewer) + Soll-GLB. potree=True erzeugt
+    zusätzlich LAS + Potree-Octree (langsam; für sehr grosse Wolken / später).
+    """
     jd = job_dir(job_id)
     scene_path = os.path.join(jd, "scene.json")
     if os.path.exists(scene_path) and not force:
         with open(scene_path, "r", encoding="utf-8") as fh:
             return json.load(fh)
 
-    # 1) LAS mit deviation. Offset = Floor der Wolken-Min-Ecke (gemeinsamer Bezug).
-    las_path = os.path.join(jd, "cloud.las")
-    las_info = export_las_with_deviation(result, las_path, bake_rgb=bake_rgb, clip=clip)
-    offset = np.asarray(las_info["offset"], dtype=np.float64)
+    # 1) Kompakte Binär-Wolke (primäre Viewer-Quelle). Liefert den gemeinsamen Offset.
+    bin_path = os.path.join(jd, "cloud.bin")
+    bin_info = export_cloud_bin(result, bin_path, clip=clip)
+    offset = np.asarray(bin_info["offset"], dtype=np.float64)
 
     # 2) Soll-GLB um denselben Offset verschoben.
     glb_path = os.path.join(jd, "soll.glb")
     glb_info = export_soll_glb(result, glb_path, offset)
 
-    # 3) Potree-Octree (kann lokal ohne Binary fehlschlagen -> dann weich melden).
+    # 3) Optional: LAS + Potree-Octree (langsam) — nur wenn potree=True.
     potree_info, potree_err = None, None
-    try:
-        potree_info = run_potree(las_path, jd)
-    except (FileNotFoundError, RuntimeError) as e:
-        potree_err = str(e)
+    if potree:
+        try:
+            las_path = os.path.join(jd, "cloud.las")
+            export_las_with_deviation(result, las_path, bake_rgb=bake_rgb, clip=clip)
+            potree_info = run_potree(las_path, jd)
+        except (FileNotFoundError, RuntimeError, ValueError) as e:
+            potree_err = str(e)
 
-    # Gemeinsame BBox (LV95) aus Wolke + Mesh.
-    bmin = np.minimum(las_info["bbox_min"], glb_info["bbox_min"]).tolist()
-    bmax = np.maximum(las_info["bbox_max"], glb_info["bbox_max"]).tolist()
+    bmin = np.minimum(bin_info["bbox_min"], glb_info["bbox_min"]).tolist()
+    bmax = np.maximum(bin_info["bbox_max"], glb_info["bbox_max"]).tolist()
 
     scene = {
         "job_id": job_id,
         "offset": offset.tolist(),          # vom Viewer wieder zu addieren
         "crs": "EPSG:2056",                 # LV95
-        "cloudUrl": f"/jobs/{job_id}/cloud/metadata.json",
+        "binUrl": f"/jobs/{job_id}/cloud.bin",   # Three.js-Viewer (primär)
+        "binCount": bin_info["count"],
         "meshUrl": f"/jobs/{job_id}/soll.glb",
+        "cloudUrl": f"/jobs/{job_id}/cloud/metadata.json",  # Potree-Octree (falls vorhanden)
         "bbox": {"min": bmin, "max": bmax},
         "deviation": {
-            "min": las_info["deviation_min"],
-            "max": las_info["deviation_max"],
-            "median": las_info["deviation_median"],
+            "min": bin_info["deviation_min"],
+            "max": bin_info["deviation_max"],
+            "median": bin_info["deviation_median"],
             "field": "deviation",
             "rgb_baked": bool(bake_rgb),
             "clip": clip,
         },
-        "points": las_info["points"],
-        "nan_points": las_info["nan_points"],
+        "points": bin_info["total"],
         "mesh": {"vertices": glb_info["vertices"], "faces": glb_info["faces"],
                  "bytes": glb_info["bytes"]},
         "octree_ready": potree_info is not None,

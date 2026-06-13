@@ -256,6 +256,15 @@ def job_soll_glb(job_id: str):
     return FileResponse(path, media_type="model/gltf-binary")
 
 
+@app.get("/jobs/{job_id}/cloud.bin")
+def job_cloud_bin(job_id: str):
+    """Kompakte Binär-Wolke (uint32 count + float32 xyz + uint8 rgb) für den Three.js-Viewer."""
+    path = os.path.join(build3d.job_dir(job_id), "cloud.bin")
+    if not os.path.exists(path):
+        raise HTTPException(404, "cloud.bin nicht vorhanden. Zuerst POST /jobs/{id}/build3d.")
+    return FileResponse(path, media_type="application/octet-stream")
+
+
 # Content-Types der Potree-2.0-Octree-Dateien.
 _CLOUD_CT = {".json": "application/json", ".bin": "application/octet-stream"}
 
