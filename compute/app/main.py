@@ -93,6 +93,15 @@ async def compare(
                                 exg_thr=exg_thr, use_veg=use_veg, cap=cap, transform=tf)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    except Exception as e:
+        # Parse-/Lese-Fehler (defektes/unvollständiges File, falsches Format) sauber
+        # melden statt 500. Häufig: iCloud-Datei nur online (leerer Upload).
+        raise HTTPException(
+            400,
+            "Datei konnte nicht verarbeitet werden. Ist die Soll-Datei ein gültiges "
+            "IFC/TIN und die Ist-Datei eine vollständige LAZ/LAS/DSM-Datei? "
+            f"(Detail: {type(e).__name__}: {str(e)[:200]})",
+        )
     finally:
         for p in (ifc_path, cloud_path):
             try: os.remove(p)
