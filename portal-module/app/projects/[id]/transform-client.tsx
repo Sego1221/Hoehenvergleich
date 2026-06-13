@@ -48,9 +48,9 @@ export function TransformPanel({ projectId, initial }: { projectId: string; init
         {initial?.verifiedAt && <span className="badge">geprüft {dateCH(initial.verifiedAt)}</span>}
       </div>
       <div className="grid cols-2">
-        <div><label>E [m]</label><input value={tE} onChange={(e) => setTE(e.target.value)} autoComplete="off" inputMode="decimal" /></div>
-        <div><label>N [m]</label><input value={tN} onChange={(e) => setTN(e.target.value)} autoComplete="off" inputMode="decimal" /></div>
-        <div><label>H [m]</label><input value={tH} onChange={(e) => setTH(e.target.value)} autoComplete="off" inputMode="decimal" /></div>
+        <div><label>E — Ost [m]</label><input value={tE} onChange={(e) => setTE(e.target.value)} autoComplete="off" inputMode="decimal" placeholder="LV95 ≈ 2 480 000 – 2 840 000" /></div>
+        <div><label>N — Nord [m]</label><input value={tN} onChange={(e) => setTN(e.target.value)} autoComplete="off" inputMode="decimal" placeholder="LV95 ≈ 1 070 000 – 1 300 000" /></div>
+        <div><label>H — Höhe [m]</label><input value={tH} onChange={(e) => setTH(e.target.value)} autoComplete="off" inputMode="decimal" placeholder="m ü. M. ≈ 300 – 500" /></div>
         <div><label>Drehung α [°]</label><input value={angle} onChange={(e) => setAngle(e.target.value)} autoComplete="off" inputMode="decimal" /></div>
         <div>
           <label>Modell-Einheit</label>
