@@ -67,12 +67,32 @@ export default function StatusViewer3D({
     new GLTFLoader().load(url, (gltf) => {
       if (cancelled) return;
       const root = gltf.scene; scene.add(root);
-      // Meshes in Reihenfolge sammeln und ueber den Index der Element-Reihenfolge
-      // (guids) zuordnen — robuster als ueber Knotennamen (GUIDs mit Sonderzeichen).
-      const meshes: THREE.Mesh[] = [];
-      root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) meshes.push(m); });
+      // Meshes in Reihenfolge sammeln. Bauteil-GUID kommt primaer aus dem
+      // Knotennamen ('bf_' + hex(guid), Sonderzeichen-sicher), Fallback = Index
+      // in der Element-Reihenfolge.
+      type MN = { mesh: THREE.Mesh; nodeName: string };
+      const mns: MN[] = [];
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        let nm = o.name || "";
+        let p: THREE.Object3D | null = o;
+        while (p && !nm.startsWith("bf_")) { p = p.parent; nm = p?.name ?? ""; }
+        mns.push({ mesh: m, nodeName: nm });
+      });
       const gs = guidsRef.current;
-      const list = meshes.map((mesh, i) => ({ guid: (gs[i] ?? mesh.name ?? "") as string, mesh }));
+      const decode = (s: string) => {
+        if (!s.startsWith("bf_")) return "";
+        try {
+          const hex = s.slice(3);
+          const bytes = new Uint8Array(hex.length / 2);
+          for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+          return new TextDecoder().decode(bytes);
+        } catch { return ""; }
+      };
+      const list = mns.map(({ mesh, nodeName }, i) => ({
+        guid: (decode(nodeName) || gs[i] || "") as string, mesh,
+      }));
       meshesRef.current = list; applyColorsVis();
       const box = new THREE.Box3().setFromObject(root);
       const c = box.getCenter(new THREE.Vector3()); const r = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 1);

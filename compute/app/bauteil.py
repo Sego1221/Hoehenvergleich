@@ -323,17 +323,19 @@ def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
 
 
 def _status_glb(Vs: list, Fs: list, guids: list, out_glb: str) -> dict:
-    """GLB mit dem GANZEN Modell, EIN Mesh PRO BAUTEIL (Knotenname = GUID), damit
-    der Viewer einzelne Bauteile umfaerben (Korrektur) und nach Status ein-/
-    ausblenden kann. Geometrie LV95, um gemeinsamen Offset verschoben (float32).
-    Faerbung macht der Viewer anhand der Status-Karte (guid->Status)."""
+    """GLB mit dem GANZEN Modell, EIN Mesh PRO BAUTEIL (Knotenname = 'bf_' +
+    hex(GUID), damit Sonderzeichen $/% nicht verlorengehen), damit der Viewer
+    einzelne Bauteile umfaerben (Korrektur) und nach Status ein-/ausblenden kann.
+    Geometrie LV95, um gemeinsamen Offset verschoben (float32). Faerbung im
+    Viewer anhand der Status-Karte (guid->Status)."""
     import trimesh
     allV = np.vstack(Vs); offset = np.floor(allV.min(axis=0))
     scene = trimesh.Scene()
-    for V, F, g in zip(Vs, Fs, guids):
+    for i, (V, F, g) in enumerate(zip(Vs, Fs, guids)):
         m = trimesh.Trimesh(vertices=(V - offset).astype(np.float32), faces=F, process=False)
         m.visual.vertex_colors = np.tile(np.array([200, 200, 205, 255], np.uint8), (len(m.vertices), 1))
-        name = str(g or "elem")
+        gid = str(g or f"i{i}")
+        name = "bf_" + gid.encode("utf-8").hex()
         scene.add_geometry(m, geom_name=name, node_name=name)
     scene.export(out_glb, file_type="glb")
     return {"offset": offset.tolist(),
