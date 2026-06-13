@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import { dissolvePerimeter } from "@/lib/geom";
+import { BASEMAPS, type BaseId } from "@/lib/basemaps";
 
 export type PMapMode = "view" | "parcel" | "draw";
 
@@ -39,7 +40,10 @@ export default function PerimeterMap(props: Props) {
   const onPickRef = useRef(props.onPick);
   const onDrawnRef = useRef(props.onDrawn);
   const perimRef = useRef(props.perimeter);
+  const baseLayersRef = useRef<Record<BaseId, any> | null>(null);
+  const baseRef = useRef<BaseId>("ortho");
   const [ready, setReady] = useState(false);
+  const [base, setBase] = useState<BaseId>("ortho");
 
   onPickRef.current = props.onPick;
   onDrawnRef.current = props.onDrawn;
@@ -69,11 +73,11 @@ export default function PerimeterMap(props: Props) {
       const map = L.map(ref.current, { minZoom: 2, maxZoom: 21, doubleClickZoom: false, worldCopyJump: true });
       mapRef.current = map;
 
-      // Esri World Imagery (weltweites Luftbild, kein Key). y/x-Reihenfolge!
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Tiles © Esri", maxNativeZoom: 19, maxZoom: 21 } as any,
-      ).addTo(map);
+      // Basiskarten: Ortho (Esri) + Karte (MapTiler/OSM), umschaltbar.
+      const mk = (id: BaseId) => L.tileLayer(BASEMAPS[id].url,
+        { attribution: BASEMAPS[id].attribution, maxNativeZoom: BASEMAPS[id].maxNativeZoom, maxZoom: 21 } as any);
+      baseLayersRef.current = { ortho: mk("ortho"), karte: mk("karte") };
+      baseLayersRef.current[baseRef.current].addTo(map);
 
       layerRef.current = L.layerGroup().addTo(map);
 
@@ -100,6 +104,17 @@ export default function PerimeterMap(props: Props) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Basiskarte umschalten (Ortho <-> Karte).
+  useEffect(() => {
+    baseRef.current = base;
+    const m = mapRef.current, ls = baseLayersRef.current;
+    if (!m || !ls) return;
+    (["ortho", "karte"] as BaseId[]).forEach((id) => {
+      if (id === base) { if (!m.hasLayer(ls[id])) ls[id].addTo(m); }
+      else if (m.hasLayer(ls[id])) m.removeLayer(ls[id]);
+    });
+  }, [base]);
 
   useEffect(() => { modeRef.current = props.mode; draftRef.current = []; redraw(); }, [props.mode]); // eslint-disable-line
   useEffect(() => { if (ready) redraw(); }, [props.perimeter, ready]); // eslint-disable-line
@@ -136,6 +151,18 @@ export default function PerimeterMap(props: Props) {
   return (
     <div className="panel" style={{ padding: 0, overflow: "hidden", position: "relative" }}>
       <div ref={ref} style={{ width: "100%", height: props.mapHeight ?? 460, cursor: props.mode === "view" ? "grab" : "crosshair" }} />
+      {/* Basiskarten-Umschalter (unten links) */}
+      <div style={{
+        position: "absolute", left: 10, bottom: 10, zIndex: 1100, display: "flex", gap: 3,
+        background: "rgba(255,255,255,0.92)", border: "1px solid var(--border)", borderRadius: 8,
+        padding: 3, boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+      }}>
+        {(["ortho", "karte"] as BaseId[]).map((id) => (
+          <button key={id} type="button" onClick={() => setBase(id)} className={base === id ? "primary" : ""} style={{ padding: "3px 10px" }}>
+            {id === "ortho" ? "Ortho" : "Karte"}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

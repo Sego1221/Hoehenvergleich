@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import "leaflet/dist/leaflet.css";
+import { BASEMAPS, type BaseId } from "@/lib/basemaps";
 
 // Baustellen-Marker (Schutzhelm) als HTML/SVG fuer L.divIcon.
 const SITE_ICON_HTML =
@@ -40,9 +41,12 @@ export default function ProjectsMap({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const layersRef = useRef<Record<BaseId, any> | null>(null);
+  const baseRef = useRef<BaseId>("ortho");
   const router = useRouter();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
+  const [base, setBase] = useState<BaseId>("ortho");
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -75,10 +79,10 @@ export default function ProjectsMap({
       const map = L.map(ref.current, { minZoom: 2, maxZoom: 21, worldCopyJump: true, zoomControl: false });
       L.control.zoom({ position: "topright" }).addTo(map);
       mapRef.current = map;
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Tiles © Esri", maxNativeZoom: 19, maxZoom: 21 } as any,
-      ).addTo(map);
+      const mk = (id: BaseId) => L.tileLayer(BASEMAPS[id].url,
+        { attribution: BASEMAPS[id].attribution, maxNativeZoom: BASEMAPS[id].maxNativeZoom, maxZoom: 21 } as any);
+      layersRef.current = { ortho: mk("ortho"), karte: mk("karte") };
+      layersRef.current[baseRef.current].addTo(map);
 
       const siteIcon = L.divIcon({ html: SITE_ICON_HTML, className: "bm-site-pin", iconSize: [30, 30], iconAnchor: [15, 15] });
       const pinned = projects.filter((p) => p.point);
@@ -106,9 +110,33 @@ export default function ProjectsMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Basiskarte umschalten (Ortho <-> Karte).
+  useEffect(() => {
+    baseRef.current = base;
+    const m = mapRef.current, ls = layersRef.current;
+    if (!m || !ls) return;
+    (["ortho", "karte"] as BaseId[]).forEach((id) => {
+      if (id === base) { if (!m.hasLayer(ls[id])) ls[id].addTo(m); }
+      else if (m.hasLayer(ls[id])) m.removeLayer(ls[id]);
+    });
+  }, [base]);
+
   return (
     <div style={{ position: "relative", height, width: "100%", overflow: "hidden", background: "#eef2f6" }}>
       <div ref={ref} style={{ width: "100%", height: "100%", cursor: "grab" }} />
+
+      {/* Basiskarten-Umschalter (unten links) */}
+      <div style={{
+        position: "absolute", left: 10, bottom: 10, zIndex: 1100, display: "flex", gap: 3,
+        background: "rgba(255,255,255,0.92)", border: "1px solid var(--border)", borderRadius: 8,
+        padding: 3, boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+      }}>
+        {(["ortho", "karte"] as BaseId[]).map((id) => (
+          <button key={id} onClick={() => setBase(id)} className={base === id ? "primary" : ""} style={{ padding: "3px 10px" }}>
+            {id === "ortho" ? "Ortho" : "Karte"}
+          </button>
+        ))}
+      </div>
 
       {/* Suchfeld + Dropdown (oben links, ueber der Karte) */}
       <div style={{ position: "absolute", top: 10, left: 10, zIndex: 1100, width: 320, maxWidth: "calc(100% - 20px)" }}>
