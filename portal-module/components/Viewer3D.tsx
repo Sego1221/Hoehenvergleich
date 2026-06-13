@@ -29,24 +29,43 @@ import type { Profile, Scene } from "@/lib/computeClient";
 type ViewMode = "3d" | "plan";
 type ColorMode = "dz" | "rgb";
 
-// RdYlBu_r-Stützfarben (blau = unter Soll … rot = über Soll).
-const RAMP: ReadonlyArray<[number, number, number]> = [
-  [69, 117, 180], [145, 191, 219], [224, 243, 248],
-  [254, 224, 144], [252, 141, 89], [215, 48, 39],
+type RGB = [number, number, number];
+type Stops = ReadonlyArray<RGB>;
+
+// Vordefinierte Farbskalen (blau/grün = unter Soll … rot = über Soll).
+const PRESETS: ReadonlyArray<{ id: string; label: string; stops: Stops }> = [
+  { id: "rdylbu", label: "Blau-Gelb-Rot", stops: [
+    [69, 117, 180], [145, 191, 219], [224, 243, 248], [254, 224, 144], [252, 141, 89], [215, 48, 39]] },
+  { id: "rwb", label: "Blau-Weiss-Rot", stops: [[33, 102, 172], [247, 247, 247], [178, 24, 43]] },
+  { id: "gwr", label: "Grün-Weiss-Rot", stops: [[26, 150, 65], [255, 255, 255], [215, 25, 28]] },
+  { id: "turbo", label: "Regenbogen", stops: [
+    [48, 18, 59], [33, 144, 255], [27, 229, 138], [223, 227, 38], [251, 134, 39], [122, 4, 3]] },
 ];
-function rampColor(t: number): [number, number, number] {
+
+function hexToRgb(hex: string): RGB {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+function rgbToHex([r, g, b]: RGB): string {
+  const c = (n: number) => Math.round(n).toString(16).padStart(2, "0");
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+function rampColor(stops: Stops, t: number): RGB {
   t = t < 0 ? 0 : t > 1 ? 1 : t;
-  const x = t * (RAMP.length - 1);
+  const x = t * (stops.length - 1);
   const i = Math.floor(x);
   const f = x - i;
-  const a = RAMP[i];
-  const b = RAMP[Math.min(i + 1, RAMP.length - 1)];
+  const a = stops[i];
+  const b = stops[Math.min(i + 1, stops.length - 1)];
   return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+function gradientCss(stops: Stops): string {
+  return "linear-gradient(90deg," + stops.map((s) => `rgb(${s[0]|0},${s[1]|0},${s[2]|0})`).join(",") + ")";
 }
 /** Farb-Buffer (uint8 0..255) für die Wolke berechnen: ΔZ-Rampe oder Echtfarbe. */
 function computeCloudColors(
   count: number, dev: Float32Array | null, rgb: Uint8Array | null,
-  mode: ColorMode, range: number, out?: Uint8Array,
+  mode: ColorMode, range: number, stops: Stops, out?: Uint8Array,
 ): Uint8Array {
   const col = out ?? new Uint8Array(count * 3);
   if (mode === "rgb" || !dev) {
@@ -58,7 +77,7 @@ function computeCloudColors(
   for (let i = 0; i < count; i++) {
     const d = dev[i];
     if (!Number.isFinite(d)) { col[i * 3] = 150; col[i * 3 + 1] = 150; col[i * 3 + 2] = 150; continue; }
-    const c = rampColor((d + range) * inv);
+    const c = rampColor(stops, (d + range) * inv);
     col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
   }
   return col;
@@ -97,6 +116,8 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   const pointSizeRef = useRef(0.5);
   const [colorMode, setColorMode] = useState<ColorMode>("dz");
   const [dzRange, setDzRange] = useState(0.3);
+  const [stops, setStops] = useState<Stops>(PRESETS[0].stops);
+  const stopsRef = useRef<Stops>(PRESETS[0].stops);
   const devRef = useRef<Float32Array | null>(null);  // ΔZ pro Punkt (v2)
   const rgbRef = useRef<Uint8Array | null>(null);     // Echtfarbe pro Punkt
   const cloudCountRef = useRef(0);
@@ -283,7 +304,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
 
     // Anfangsfarbe: bei v2 nach ΔZ, sonst die (gebackene) Echtfarbe.
     const initialMode: ColorMode = dev ? "dz" : "rgb";
-    const colArr = computeCloudColors(count, dev, rgb, initialMode, dzRange);
+    const colArr = computeCloudColors(count, dev, rgb, initialMode, dzRange, stopsRef.current);
     colorArrRef.current = colArr;
 
     const geom = new THREE.BufferGeometry();
@@ -302,12 +323,12 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     if (!dev) setColorMode("rgb"); // Legacy: kein ΔZ-Modus möglich
   }
 
-  // Wolke clientseitig neu einfärben (ΔZ-Skala oder Echtfarbe), ohne Neuladen.
-  function applyCloudColors(mode: ColorMode, range: number) {
+  // Wolke clientseitig neu einfärben (ΔZ-Skala/Farben oder Echtfarbe), ohne Neuladen.
+  function applyCloudColors(mode: ColorMode, range: number, st: Stops) {
     const pts = pointsRef.current;
     const arr = colorArrRef.current;
     if (!pts || !arr) return;
-    computeCloudColors(cloudCountRef.current, devRef.current, rgbRef.current, mode, range, arr);
+    computeCloudColors(cloudCountRef.current, devRef.current, rgbRef.current, mode, range, st, arr);
     (pts.geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
   }
 
@@ -404,9 +425,10 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
 
   // ------------------------------------------- Einfärbung (live) -------------
   useEffect(() => {
-    applyCloudColors(colorMode, dzRange);
+    stopsRef.current = stops;
+    applyCloudColors(colorMode, dzRange, stops);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorMode, dzRange, ready]);
+  }, [colorMode, dzRange, stops, ready]);
 
   // ------------------------------------------------ Schnitt: Punkt picken ----
   // Raycast gegen Punkte/Mesh; Fallback auf horizontale Ebene z = bbox-Mitte.
@@ -563,10 +585,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
             >
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Abweichung ΔZ ±{dzRange.toFixed(2)} m</div>
               <div
-                style={{
-                  height: 8, borderRadius: 4, marginBottom: 4,
-                  background: "linear-gradient(90deg,#4575b4,#91bfdb,#e0f3f8,#fee090,#fc8d59,#d73027)",
-                }}
+                style={{ height: 8, borderRadius: 4, marginBottom: 4, background: gradientCss(stops) }}
               />
               <div className="spread" style={{ display: "flex", justifyContent: "space-between" }}>
                 <span>−{dzRange.toFixed(2)} (zu tief)</span><span>0</span><span>+{dzRange.toFixed(2)} (zu hoch)</span>
@@ -627,6 +646,37 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
                 <label className="small">Skala ±{(dzRange * 100).toFixed(0)} cm</label>
                 <div style={{ marginTop: 6 }}>
                   <Slider value={dzRange} min={0.01} max={2} step={0.01} onChange={setDzRange} />
+                </div>
+
+                <label className="small" style={{ display: "block", marginTop: 10 }}>Farbskala</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                  {PRESETS.map((p) => (
+                    <button key={p.id} onClick={() => setStops(p.stops)}
+                      style={{ flex: "1 1 46%", padding: "3px 6px", display: "flex", flexDirection: "column", gap: 3 }}>
+                      <span className="small" style={{ fontSize: 10 }}>{p.label}</span>
+                      <span style={{ height: 6, borderRadius: 3, background: gradientCss(p.stops) }} />
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  {([["zu tief", "lo"], ["auf Soll", "mid"], ["zu hoch", "hi"]] as const).map(([lbl, pos]) => {
+                    const idx = pos === "lo" ? 0 : pos === "hi" ? stops.length - 1 : Math.floor((stops.length - 1) / 2);
+                    return (
+                      <label key={pos} className="small" style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center", flex: 1 }}>
+                        <span style={{ fontSize: 10 }}>{lbl}</span>
+                        <input
+                          type="color"
+                          value={rgbToHex(stops[idx])}
+                          onChange={(e) => {
+                            const lo = stops[0], mi = stops[Math.floor((stops.length - 1) / 2)], hi = stops[stops.length - 1];
+                            const nc = hexToRgb(e.target.value);
+                            setStops([pos === "lo" ? nc : lo, pos === "mid" ? nc : mi, pos === "hi" ? nc : hi]);
+                          }}
+                          style={{ width: 36, height: 24, border: "1px solid var(--border)", borderRadius: 4, background: "none", padding: 0, cursor: "pointer" }}
+                        />
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             )}
