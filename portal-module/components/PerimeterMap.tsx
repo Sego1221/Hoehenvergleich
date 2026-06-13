@@ -78,9 +78,12 @@ export default function PerimeterMap(props: Props) {
       const map = L.map(ref.current, { crs, minZoom: 14, maxZoom: 28, doubleClickZoom: false });
       mapRef.current = map;
 
+      // maxNativeZoom < maxZoom: Swissimage hat in vielen Gebieten keine Kacheln
+      // auf den hoechsten Stufen (z27/28) -> Overzoom (Skalieren der letzten
+      // vorhandenen Stufe) statt leerer Karte beim Reinzoomen.
       L.tileLayer(
         "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/2056/{z}/{x}/{y}.jpeg",
-        { attribution: "© swisstopo", maxNativeZoom: 28, minNativeZoom: 14 } as any,
+        { attribution: "© swisstopo", maxNativeZoom: 26, minNativeZoom: 14, maxZoom: 28 } as any,
       ).addTo(map);
 
       layerRef.current = L.layerGroup().addTo(map);
