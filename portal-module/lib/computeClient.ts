@@ -94,7 +94,33 @@ export type BauteilResult = {
   transform_warning: boolean;
   meshUrl?: string;
   offset?: [number, number, number];
+  diag?: {
+    cloud_bbox: [number, number, number, number];
+    model_center_direct: [number, number];
+    model_center_flipped: [number, number];
+  } | null;
 };
+
+/**
+ * Verständliche Georef-Warnung mit echten Zahlen. Zeigt die Wolken-BBox (LV95)
+ * und die Modell-Mitte beider Vorzeichen-Varianten — beide werden automatisch
+ * geprüft, daher ist es bei dieser Meldung KEIN reines Vorzeichen-Problem,
+ * sondern Werte (E/N vertauscht, Tippfehler, Ursprung) oder ein Scan in
+ * anderem Koordinatensystem.
+ */
+export function georefWarning(diag?: BauteilResult["diag"]): string {
+  if (!diag) return "Modell liegt nicht in der Wolke — Georef-Werte und Scan-Koordinatensystem prüfen.";
+  const [eMin, nMin, eMax, nMax] = diag.cloud_bbox;
+  const [de, dn] = diag.model_center_direct;
+  const [fe, fn] = diag.model_center_flipped;
+  return (
+    `Modell liegt nicht in der Wolke. Beide Vorzeichen wurden automatisch geprüft — ` +
+    `es ist also kein reines Vorzeichen-, sondern ein Werte-Problem (E/N vertauscht, ` +
+    `Tippfehler im Ursprung) oder der Scan ist nicht in LV95.\n` +
+    `Wolke (LV95): E ${eMin}…${eMax}, N ${nMin}…${nMax}.\n` +
+    `Modell-Mitte direkt: E ${de}, N ${dn} · negiert: E ${fe}, N ${fn}.`
+  );
+}
 
 /** Struktur-IFC + Scan -> Status je Bauteil. transform: Strukturmodell-Georef. */
 export async function bauteilEvaluate(
@@ -157,10 +183,14 @@ export async function bauteilModel(
   return req<BfModelResult>("/bauteil/model", { method: "POST", body: fd });
 }
 
-/** Tages-Scan gegen einen Modell-Katalog auswerten. */
-export async function bauteilScan(modelId: string, cloud: Blob, cloudName: string): Promise<BauteilResult> {
+/** Tages-Scan gegen einen Modell-Katalog auswerten (mit aktueller Projekt-Georef). */
+export async function bauteilScan(
+  modelId: string, cloud: Blob, cloudName: string,
+  transform?: { tE: number; tN: number; tH: number; angle_deg: number },
+): Promise<BauteilResult> {
   const fd = new FormData();
   fd.append("cloud", cloud, cloudName);
+  if (transform) fd.append("transform", JSON.stringify(transform));
   return req<BauteilResult>(`/bauteil/model/${modelId}/scan`, { method: "POST", body: fd });
 }
 

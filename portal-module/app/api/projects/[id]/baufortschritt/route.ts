@@ -9,7 +9,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { bauteilScan } from "@/lib/computeClient";
+import { bauteilScan, georefWarning } from "@/lib/computeClient";
+import { forwardTransform } from "@/lib/transform";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,17 +45,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const surveyDate = String(form?.get("surveyDate") ?? "").trim();
   const name = String(form?.get("name") ?? "").trim() || (surveyDate || scanName);
 
+  // Aktuelle Projekt-Georef mitgeben, damit der Scan nicht die (evtl. falsche)
+  // Georef vom Modell-Upload nutzt.
+  const [trow] = await db.select().from(schema.projectTransforms)
+    .where(eq(schema.projectTransforms.projectId, params.id))
+    .orderBy(desc(schema.projectTransforms.createdAt)).limit(1);
+
   let result;
   try {
-    result = await bauteilScan(model.computeModelId, scan, scanName);
+    result = await bauteilScan(model.computeModelId, scan, scanName,
+      trow ? forwardTransform(trow) : undefined);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
   if (result.transform_warning) {
-    return NextResponse.json(
-      { error: "Modell liegt nicht in der Wolke (Georef prüfen — Vorzeichen/Werte)." },
-      { status: 422 },
-    );
+    return NextResponse.json({ error: georefWarning(result.diag) }, { status: 422 });
   }
 
   const [row] = await db

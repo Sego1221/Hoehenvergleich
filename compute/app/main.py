@@ -259,15 +259,26 @@ def bauteil_model_file_delete(model_id: str, name: str):
 async def bauteil_scan(
     model_id: str,
     cloud: UploadFile = File(..., description="Tages-Scan LAZ/LAS"),
+    transform: str = Form(""),
     res: float = Form(0.10),
     tol: float = Form(0.05),
 ):
-    """Tages-Scan gegen den Modell-Katalog auswerten -> Status je Bauteil + GLB."""
+    """Tages-Scan gegen den Modell-Katalog auswerten -> Status je Bauteil + GLB.
+    Mit 'transform' wird die aktuelle Projekt-Georef genutzt UND persistiert,
+    damit nicht die (evtl. falsche) Georef vom Upload-Zeitpunkt verwendet wird."""
     mdir = bauteil.model_dir(model_id)
     try:
         catalog, tf = bauteil.load_model(mdir)
     except ValueError as e:
         raise HTTPException(404, str(e))
+    if transform.strip():
+        try:
+            t = json.loads(transform)
+            tf = {"tE": float(t["tE"]), "tN": float(t["tN"]), "tH": float(t["tH"]),
+                  "angle_deg": float(t.get("angle_deg", 0.0))}
+            bauteil.update_transform(mdir, tf)
+        except Exception:
+            raise HTTPException(400, "transform ungueltig.")
     ext = os.path.splitext(cloud.filename or "")[1].lower()
     if ext not in (".laz", ".las"):
         raise HTTPException(415, "Scan muss LAZ/LAS sein.")

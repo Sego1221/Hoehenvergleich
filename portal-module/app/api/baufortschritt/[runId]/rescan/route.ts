@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { bauteilRescan } from "@/lib/computeClient";
+import { bauteilRescan, georefWarning } from "@/lib/computeClient";
 import { forwardTransform } from "@/lib/transform";
 
 export const runtime = "nodejs";
@@ -30,7 +30,7 @@ export async function POST(_req: NextRequest, { params }: { params: { runId: str
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
   if (result.transform_warning) {
-    return NextResponse.json({ error: "Modell liegt nicht in der Wolke (Georef prüfen)." }, { status: 422 });
+    return NextResponse.json({ error: georefWarning(result.diag) }, { status: 422 });
   }
   const [row] = await db.update(schema.bfRuns).set({
     summary: result.summary as unknown as Record<string, unknown>,

@@ -230,6 +230,19 @@ def load_model(mdir: str):
     return d["catalog"], d["transform"]
 
 
+def update_transform(mdir: str, transform: dict) -> None:
+    """Gespeicherte Georef des Katalogs aktualisieren (Geometrie bleibt lokal).
+    Damit nutzt auch ein NEUER Scan die aktuelle Projekt-Georef, nicht die
+    (evtl. falsche) vom Upload-Zeitpunkt."""
+    import os as _os, pickle as _pickle
+    p = _os.path.join(mdir, "catalog.pkl")
+    with open(p, "rb") as fh:
+        d = _pickle.load(fh)
+    d["transform"] = transform
+    with open(p, "wb") as fh:
+        _pickle.dump(d, fh)
+
+
 _VERT_Z = 0.6   # Z-Ausdehnung >= 0.6 m -> vertikales Bauteil (Wand/Stuetze) -> Flaechendeckung
 
 
@@ -339,9 +352,28 @@ def evaluate_scan(catalog: list[dict], transform: dict, cloud_path: str,
         scene = _status_glb_with_colors(Vs, [e["F"] for e in catalog],
                                         [e["guid"] for e in catalog],
                                         [e.get("color") for e in catalog], out_glb)
+    diag = None
+    if flipped is None:
+        diag = _georef_diag(catalog, transform, xyz)
     return {"summary": summ, "elements": rows, "transform_flipped": flipped,
-            "transform_warning": (flipped is None), "scene": scene,
+            "transform_warning": (flipped is None), "scene": scene, "diag": diag,
             "ifc_colors": {e["guid"]: e.get("color") for e in catalog if e["guid"]}}
+
+
+def _georef_diag(elements: list[dict], transform: dict, xyz: np.ndarray) -> dict:
+    """Diagnose, wenn keine Orientierung trifft: Wolken-BBox (LV95) und die
+    Modell-Mitte (E/N) je Vorzeichen-Variante. Macht 'Vorzeichen/Werte' sichtbar."""
+    cmin = xyz[:, :2].min(0); cmax = xyz[:, :2].max(0)
+    flip = {**transform, "tE": -transform["tE"], "tN": -transform["tN"], "tH": -transform["tH"]}
+    def center(t):
+        c = np.vstack([to_lv95(e["V"], t).mean(0) for e in elements]).mean(0)
+        return [round(float(c[0]), 2), round(float(c[1]), 2)]
+    return {
+        "cloud_bbox": [round(float(cmin[0]), 2), round(float(cmin[1]), 2),
+                       round(float(cmax[0]), 2), round(float(cmax[1]), 2)],
+        "model_center_direct": center(transform),
+        "model_center_flipped": center(flip),
+    }
 
 
 def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
