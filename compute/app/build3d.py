@@ -81,36 +81,52 @@ def _deviation_rgb_u8(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
 # ----------------------------- Kompakte Binär-Wolke (Three.js-Viewer) -----------------------------
 def export_cloud_bin(result: engine.Result, out_path: str,
                      max_points: int = 1_500_000, clip: float = 0.30) -> dict:
-    """Ausgedünnte Wolke als kompaktes Binärformat für den Three.js-Viewer.
+    """Ausgedünnte Wolke als kompaktes Binärformat (v2) für den Three.js-Viewer.
 
-    Format (little-endian): uint32 count M, dann M*3 float32 Positionen (relativ
-    zum Offset, float32-tauglich), dann M*3 uint8 RGB (ΔZ-Rampe). Kein Potree nötig.
+    Layout (little-endian, Floats 4-aligned, damit Float32Array-Views direkt gehen):
+      uint32 count M
+      M*3 float32  Positionen (relativ zum Offset, float32-tauglich)
+      M   float32  deviation (ΔZ pro Punkt in m; NaN = ausserhalb Soll)
+      M*3 uint8    Echtfarbe RGB (Original-Foto-RGB der Wolke; grau falls keine)
+    Der Viewer färbt clientseitig: nach ΔZ (verstellbare Skala) ODER Echtfarbe.
     Offset = Floor der Wolken-Min-Ecke (auch für das Soll-GLB verwenden).
     """
     cloud_path = result.meta.get("cloud_path")
     if not cloud_path or not os.path.exists(cloud_path):
         raise ValueError("Quell-Punktwolke nicht verfügbar (cloud_path fehlt).")
     from . import georef
-    xyz, _ = engine.load_cloud(cloud_path)
+    xyz, rgb = engine.load_cloud(cloud_path)
     xyz, _ = georef.georeference(xyz, result.meta.get("cloud_transform"))
     dev = engine.point_deviations(result, xyz).astype(np.float32)
     offset = np.floor(xyz.min(axis=0))
     bbox_min = xyz.min(axis=0).tolist(); bbox_max = xyz.max(axis=0).tolist()
 
     n = xyz.shape[0]
-    if n > max_points:                       # deterministisches Stride-Subsampling
-        step = int(np.ceil(n / max_points))
-        xyz = xyz[::step]; dev = dev[::step]
+    step = int(np.ceil(n / max_points)) if n > max_points else 1
+    xyz = xyz[::step]; dev = dev[::step]
+    if rgb is not None:
+        rgb = rgb[::step]
     pos = (xyz - offset).astype(np.float32)
-    col = _deviation_rgb_u8(dev, clip)
+
+    # Echtfarbe auf uint8 0..255 bringen (Original kann 8- oder 16-bit sein).
+    if rgb is None:
+        col = np.full((pos.shape[0], 3), 180, dtype=np.uint8)
+    else:
+        r = rgb.astype(np.float64)
+        if r.max() > 255:
+            r = r / 257.0          # 16-bit -> 8-bit
+        col = np.clip(r, 0, 255).astype(np.uint8)
+
     m = pos.shape[0]
     with open(out_path, "wb") as fh:
         fh.write(struct.pack("<I", m))
-        fh.write(np.ascontiguousarray(pos).tobytes())
-        fh.write(np.ascontiguousarray(col).tobytes())
+        fh.write(np.ascontiguousarray(pos).tobytes())                 # f32 *3M
+        fh.write(np.ascontiguousarray(dev.astype(np.float32)).tobytes())  # f32 *M
+        fh.write(np.ascontiguousarray(col).tobytes())                 # u8 *3M
     fin = dev[np.isfinite(dev)]
     return {"count": m, "total": int(n), "bytes": int(os.path.getsize(out_path)),
             "offset": offset.tolist(), "bbox_min": bbox_min, "bbox_max": bbox_max,
+            "has_rgb": rgb is not None,
             "deviation_min": float(fin.min()) if fin.size else None,
             "deviation_max": float(fin.max()) if fin.size else None,
             "deviation_median": float(np.median(fin)) if fin.size else None}
@@ -262,6 +278,8 @@ def build(result: engine.Result, job_id: str, *, bake_rgb: bool = True,
         "crs": "EPSG:2056",                 # LV95
         "binUrl": f"/jobs/{job_id}/cloud.bin",   # Three.js-Viewer (primär)
         "binCount": bin_info["count"],
+        "cloudFormat": "v2",                     # xyz_f32 + dev_f32 + rgb_u8
+        "hasRgb": bool(bin_info["has_rgb"]),
         "meshUrl": f"/jobs/{job_id}/soll.glb",
         "cloudUrl": f"/jobs/{job_id}/cloud/metadata.json",  # Potree-Octree (falls vorhanden)
         "bbox": {"min": bmin, "max": bmax},

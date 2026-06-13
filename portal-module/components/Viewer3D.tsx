@@ -27,6 +27,42 @@ import { BP } from "@/lib/api";
 import type { Profile, Scene } from "@/lib/computeClient";
 
 type ViewMode = "3d" | "plan";
+type ColorMode = "dz" | "rgb";
+
+// RdYlBu_r-Stützfarben (blau = unter Soll … rot = über Soll).
+const RAMP: ReadonlyArray<[number, number, number]> = [
+  [69, 117, 180], [145, 191, 219], [224, 243, 248],
+  [254, 224, 144], [252, 141, 89], [215, 48, 39],
+];
+function rampColor(t: number): [number, number, number] {
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const x = t * (RAMP.length - 1);
+  const i = Math.floor(x);
+  const f = x - i;
+  const a = RAMP[i];
+  const b = RAMP[Math.min(i + 1, RAMP.length - 1)];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+/** Farb-Buffer (uint8 0..255) für die Wolke berechnen: ΔZ-Rampe oder Echtfarbe. */
+function computeCloudColors(
+  count: number, dev: Float32Array | null, rgb: Uint8Array | null,
+  mode: ColorMode, range: number, out?: Uint8Array,
+): Uint8Array {
+  const col = out ?? new Uint8Array(count * 3);
+  if (mode === "rgb" || !dev) {
+    if (rgb) col.set(rgb.subarray(0, count * 3));
+    else col.fill(180);
+    return col;
+  }
+  const inv = 1 / (2 * (range || 0.0001));
+  for (let i = 0; i < count; i++) {
+    const d = dev[i];
+    if (!Number.isFinite(d)) { col[i * 3] = 150; col[i * 3 + 1] = 150; col[i * 3 + 2] = 150; continue; }
+    const c = rampColor((d + range) * inv);
+    col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
+  }
+  return col;
+}
 
 export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; tol?: number }) {
   const toast = useToast();
@@ -59,6 +95,12 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   const [busy, setBusy] = useState(false);
   const [pointSize, setPointSize] = useState(0.5);
   const pointSizeRef = useRef(0.5);
+  const [colorMode, setColorMode] = useState<ColorMode>("dz");
+  const [dzRange, setDzRange] = useState(0.3);
+  const devRef = useRef<Float32Array | null>(null);  // ΔZ pro Punkt (v2)
+  const rgbRef = useRef<Uint8Array | null>(null);     // Echtfarbe pro Punkt
+  const cloudCountRef = useRef(0);
+  const colorArrRef = useRef<Uint8Array | null>(null);
   const viewModeRef = useRef<ViewMode>("3d");
   const cutModeRef = useRef(false);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
@@ -217,17 +259,36 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     const buf = await resp.arrayBuffer();
     const dv = new DataView(buf);
     const count = dv.getUint32(0, true); // little-endian
-    const posBytes = count * 3 * 4;
-    const posStart = 4;
-    const colStart = posStart + posBytes;
-    // Subarray-Views direkt auf den Buffer (kein Kopieren der Positionen).
-    const positions = new Float32Array(buf, posStart, count * 3);
-    const colors = new Uint8Array(buf, colStart, count * 3);
+    const fmt = sceneJsonRef.current?.cloudFormat;
+
+    let positions: Float32Array;
+    let dev: Float32Array | null = null;
+    let rgb: Uint8Array | null = null;
+    if (fmt === "v2") {
+      // count, pos(f32*3), dev(f32), rgb(u8*3) — Floats 4-aligned.
+      const oPos = 4;
+      const oDev = oPos + count * 12;
+      const oRgb = oDev + count * 4;
+      positions = new Float32Array(buf, oPos, count * 3);
+      dev = new Float32Array(buf, oDev, count);
+      rgb = new Uint8Array(buf, oRgb, count * 3);
+    } else {
+      // Legacy v1: count, pos(f32*3), rgb(u8*3, gebackene ΔZ-Farbe). Kein dev.
+      positions = new Float32Array(buf, 4, count * 3);
+      rgb = new Uint8Array(buf, 4 + count * 12, count * 3);
+    }
+    devRef.current = dev;
+    rgbRef.current = rgb;
+    cloudCountRef.current = count;
+
+    // Anfangsfarbe: bei v2 nach ΔZ, sonst die (gebackene) Echtfarbe.
+    const initialMode: ColorMode = dev ? "dz" : "rgb";
+    const colArr = computeCloudColors(count, dev, rgb, initialMode, dzRange);
+    colorArrRef.current = colArr;
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    // Uint8 normalized -> 0..1 im Shader (vertexColors).
-    geom.setAttribute("color", new THREE.BufferAttribute(colors, 3, true));
+    geom.setAttribute("color", new THREE.BufferAttribute(colArr, 3, true)); // normalized
     geom.computeBoundingSphere();
 
     const mat = new THREE.PointsMaterial({
@@ -238,6 +299,16 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     const points = new THREE.Points(geom, mat);
     pointsRef.current = points;
     sceneRef.current?.add(points);
+    if (!dev) setColorMode("rgb"); // Legacy: kein ΔZ-Modus möglich
+  }
+
+  // Wolke clientseitig neu einfärben (ΔZ-Skala oder Echtfarbe), ohne Neuladen.
+  function applyCloudColors(mode: ColorMode, range: number) {
+    const pts = pointsRef.current;
+    const arr = colorArrRef.current;
+    if (!pts || !arr) return;
+    computeCloudColors(cloudCountRef.current, devRef.current, rgbRef.current, mode, range, arr);
+    (pts.geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
   }
 
   // ---------------------------------------------------------- Mesh laden -----
@@ -330,6 +401,12 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     const m = pointsRef.current?.material as THREE.PointsMaterial | undefined;
     if (m) { m.size = pointSize; m.needsUpdate = true; }
   }, [pointSize]);
+
+  // ------------------------------------------- Einfärbung (live) -------------
+  useEffect(() => {
+    applyCloudColors(colorMode, dzRange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorMode, dzRange, ready]);
 
   // ------------------------------------------------ Schnitt: Punkt picken ----
   // Raycast gegen Punkte/Mesh; Fallback auf horizontale Ebene z = bbox-Mitte.
@@ -463,8 +540,6 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     setProfile(null);
   }
 
-  const clip = sceneJsonRef.current?.deviation?.clip ?? 0.3;
-
   return (
     <div className="grid" style={{ gap: 12 }}>
       <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 300px", alignItems: "start" }}>
@@ -477,26 +552,27 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
             ref={containerRef}
             style={{ position: "absolute", inset: 0, cursor: cutMode ? "crosshair" : "grab" }}
           />
-          {/* Legende ΔZ-Einfärbung */}
-          <div
-            style={{
-              position: "absolute", left: 12, bottom: 12, zIndex: 4,
-              background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 8,
-              padding: "8px 10px", fontSize: 11, lineHeight: 1.4, maxWidth: 260,
-            }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>Einfärbung ΔZ ±{clip.toFixed(2)} m</div>
+          {/* Legende ΔZ-Einfärbung (nur im Abweichungs-Modus) */}
+          {colorMode === "dz" && (
             <div
               style={{
-                height: 8, borderRadius: 4, marginBottom: 4,
-                background: "linear-gradient(90deg,#4575b4,#91bfdb,#e0f3f8,#fee090,#fc8d59,#d73027)",
+                position: "absolute", left: 12, bottom: 12, zIndex: 4,
+                background: "rgba(0,0,0,0.55)", color: "#fff", borderRadius: 8,
+                padding: "8px 10px", fontSize: 11, lineHeight: 1.4, maxWidth: 260,
               }}
-            />
-            <div className="spread" style={{ display: "flex", justifyContent: "space-between" }}>
-              <span>−{clip.toFixed(2)}</span><span>0</span><span>+{clip.toFixed(2)}</span>
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Abweichung ΔZ ±{dzRange.toFixed(2)} m</div>
+              <div
+                style={{
+                  height: 8, borderRadius: 4, marginBottom: 4,
+                  background: "linear-gradient(90deg,#4575b4,#91bfdb,#e0f3f8,#fee090,#fc8d59,#d73027)",
+                }}
+              />
+              <div className="spread" style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>−{dzRange.toFixed(2)} (zu tief)</span><span>0</span><span>+{dzRange.toFixed(2)} (zu hoch)</span>
+              </div>
             </div>
-            <div style={{ opacity: 0.8, marginTop: 4 }}>Live-Toleranz folgt</div>
-          </div>
+          )}
           {status && (
             <div
               style={{
@@ -541,6 +617,22 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
           </div>
 
           <div className="panel">
+            <label className="small">Einfärbung</label>
+            <div className="grid cols-2" style={{ marginTop: 8 }}>
+              <button className={colorMode === "dz" ? "primary" : ""} onClick={() => setColorMode("dz")}>Abweichung</button>
+              <button className={colorMode === "rgb" ? "primary" : ""} onClick={() => setColorMode("rgb")}>Echtfarbe</button>
+            </div>
+            {colorMode === "dz" && (
+              <div style={{ marginTop: 10 }}>
+                <label className="small">Skala ±{dzRange.toFixed(2)} m</label>
+                <div style={{ marginTop: 6 }}>
+                  <Slider value={dzRange} min={0.05} max={2} step={0.05} onChange={setDzRange} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="panel">
             <label className="small">Schnitt / Profil</label>
             <div className="grid cols-2" style={{ marginTop: 8 }}>
               <button className={cutMode ? "primary" : ""} onClick={toggleCut} disabled={!ready}>
@@ -556,8 +648,8 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
 
           <div className="panel">
             <div className="small muted">
-              Einfärbung ΔZ ±{clip.toFixed(2)} m (gebacken). Die Live-Toleranz ({(tol * 100).toFixed(0)} cm)
-              wirkt aktuell nur in der 2D-Karte; im 3D folgt sie später.
+              „Abweichung" färbt nach ΔZ (Skala oben verstellbar); „Echtfarbe" zeigt das
+              Original-Foto der Wolke. Toleranz-Slider (2D-Karte): {(tol * 100).toFixed(0)} cm.
             </div>
           </div>
         </div>

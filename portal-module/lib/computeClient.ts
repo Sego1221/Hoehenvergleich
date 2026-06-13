@@ -86,6 +86,8 @@ export type Scene = {
   crs: string;                       // "EPSG:2056"
   binUrl: string;                    // "/jobs/{jobId}/cloud.bin" (Three-Punktwolke)
   binCount: number;                  // Anzahl Punkte in cloud.bin
+  cloudFormat?: string;              // "v2" = xyz_f32 + dev_f32 + rgb_u8
+  hasRgb?: boolean;                  // Echtfarbe vorhanden
   meshUrl: string;                   // "/jobs/{jobId}/soll.glb"
   cloudUrl?: string;                 // (legacy/optional) Octree-Metadata
   bbox: { min: [number, number, number]; max: [number, number, number] };
