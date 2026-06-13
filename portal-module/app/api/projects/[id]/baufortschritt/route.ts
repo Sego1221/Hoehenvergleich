@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { bauteilEvaluate } from "@/lib/computeClient";
+import { forwardTransform } from "@/lib/transform";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,13 +27,22 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const [project] = await db.select().from(schema.projects).where(eq(schema.projects.id, params.id));
   if (!project) return NextResponse.json({ error: "Projekt nicht gefunden." }, { status: 404 });
-  const tf = project.structureTransform as { tE: number; tN: number; tH: number; angleDeg: number } | null;
-  if (!tf) {
+  // Gemeinsame Projekt-Georef (gleiche wie Aushub). Lokales Tekla-Modell wird
+  // transformiert; Richtung/Vorzeichen via forwardTransform aufgeloest.
+  const [trow] = await db
+    .select()
+    .from(schema.projectTransforms)
+    .where(eq(schema.projectTransforms.projectId, params.id))
+    .orderBy(desc(schema.projectTransforms.createdAt))
+    .limit(1);
+  if (!trow) {
     return NextResponse.json(
-      { error: "Keine Strukturmodell-Georef hinterlegt (Verwaltung → Projekt bearbeiten)." },
+      { error: "Keine Georef-Transformation hinterlegt (Verwaltung → Projekt bearbeiten)." },
       { status: 400 },
     );
   }
+  const fwd = forwardTransform(trow);
+  const tf = { tE: fwd.tE, tN: fwd.tN, tH: fwd.tH, angleDeg: fwd.angle_deg };
 
   const form = await req.formData().catch(() => null);
   const ifc = form?.get("ifc");

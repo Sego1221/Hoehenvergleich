@@ -105,7 +105,9 @@ function NewComparisonDialog({
       // anwenden (keine Frage pro Messung).
       if (hasTransform) {
         const tr = await fetch(`${BP}/api/projects/${projectId}/transform`).then((r) => r.json());
-        if (tr) fd.append("transform", JSON.stringify(tr));
+        // Kanonische lokal->LV95-Form (mit angle_deg-Key); Engine ueberspringt
+        // ohnehin Modelle, die schon in LV95 liegen (Aushub).
+        if (tr?.forward) fd.append("transform", JSON.stringify(tr.forward));
       }
       const r = await fetch(`${BP}/api/projects/${projectId}/comparisons`, { method: "POST", body: fd });
       const data = await r.json();

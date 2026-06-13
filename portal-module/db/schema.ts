@@ -47,6 +47,10 @@ export const projectTransforms = hv.table("project_transforms", {
   tN: doublePrecision("t_n").notNull(),
   tH: doublePrecision("t_h").notNull(),
   angleDeg: doublePrecision("angle_deg").notNull().default(0),
+  // Eingaberichtung der Werte. "local_to_lv95" (Default) = Werte gelten direkt
+  // fuer LV95 = Rz(-a)(lokal - T). "lv95_to_local" = umgekehrt eingegeben ->
+  // Vorzeichen von T/Winkel wird beim Anwenden gedreht.
+  direction: text("direction").notNull().default("local_to_lv95"),
   unit: text("unit").notNull().default("m"), // "m" | "mm" (Modell-Einheit, z.B. Tekla = mm)
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

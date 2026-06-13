@@ -7,8 +7,9 @@ import { BP } from "@/lib/api";
 
 type T = {
   tE: number; tN: number; tH: number; angleDeg: number;
-  unit: string; label?: string; verifiedAt?: string | Date | null;
+  unit: string; direction?: string; label?: string; verifiedAt?: string | Date | null;
 };
+type Dir = "local_to_lv95" | "lv95_to_local";
 
 export function TransformPanel({ projectId, initial }: { projectId: string; initial: T | null }) {
   const toast = useToast();
@@ -17,6 +18,7 @@ export function TransformPanel({ projectId, initial }: { projectId: string; init
   const [tH, setTH] = useState(String(initial?.tH ?? ""));
   const [angle, setAngle] = useState(String(initial?.angleDeg ?? "0"));
   const [unit, setUnit] = useState<"m" | "mm">((initial?.unit as "m" | "mm") ?? "m");
+  const [direction, setDirection] = useState<Dir>((initial?.direction as Dir) ?? "local_to_lv95");
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -27,7 +29,7 @@ export function TransformPanel({ projectId, initial }: { projectId: string; init
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           tE: Number(tE), tN: Number(tN), tH: Number(tH),
-          angleDeg: Number(angle), unit,
+          angleDeg: Number(angle), unit, direction,
         }),
       });
       if (!r.ok) throw new Error((await r.json()).error ?? "Fehler");
@@ -56,6 +58,17 @@ export function TransformPanel({ projectId, initial }: { projectId: string; init
             value={unit}
             onChange={setUnit}
             options={[{ value: "m", label: "Meter (m)" }, { value: "mm", label: "Millimeter (mm)" }]}
+          />
+        </div>
+        <div>
+          <label>Eingaberichtung</label>
+          <Select<Dir>
+            value={direction}
+            onChange={setDirection}
+            options={[
+              { value: "local_to_lv95", label: "lokal → LV95" },
+              { value: "lv95_to_local", label: "LV95 → lokal" },
+            ]}
           />
         </div>
         <div style={{ display: "flex", alignItems: "flex-end" }}>

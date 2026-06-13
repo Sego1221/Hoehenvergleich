@@ -48,7 +48,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
       <ProjectView
         projectId={params.id}
         hasTransform={!!transform}
-        hasStructTransform={!!project.structureTransform}
+        hasStructTransform={!!transform}
         initialComparisons={comparisons.map((c) => ({
           id: c.id,
           name: c.name,

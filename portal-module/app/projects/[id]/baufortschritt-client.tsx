@@ -47,8 +47,9 @@ export function BaufortschrittPanel({
       <div className="panel">
         <strong>Baufortschritt</strong>
         <div className="small muted" style={{ marginTop: 6 }}>
-          Es ist noch keine <b>Strukturmodell-Georef</b> hinterlegt. In der Verwaltung das Projekt
+          Es ist noch keine <b>Georef-Transformation</b> hinterlegt. In der Verwaltung das Projekt
           bearbeiten und tE/tN/tH/Winkel setzen — danach können hier Etappen ausgewertet werden.
+          (Gleiche Transformation wie der Aushub; das lokale Tekla-Modell wird damit nach LV95 gebracht.)
         </div>
       </div>
     );

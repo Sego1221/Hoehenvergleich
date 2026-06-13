@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
+import { forwardTransform } from "@/lib/transform";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     .where(eq(schema.projectTransforms.projectId, params.id))
     .orderBy(desc(schema.projectTransforms.createdAt))
     .limit(1);
-  return NextResponse.json(row ?? null);
+  if (!row) return NextResponse.json(null);
+  // Rohwerte (fuer das Panel) + kanonische lokal->LV95-Form (fuer den Compute).
+  return NextResponse.json({ ...row, forward: forwardTransform(row) });
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
@@ -25,6 +28,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const tE = num(b?.tE), tN = num(b?.tN), tH = num(b?.tH);
   const angleDeg = num(b?.angleDeg ?? 0);
   const unit = b?.unit === "mm" ? "mm" : "m";
+  const direction = b?.direction === "lv95_to_local" ? "lv95_to_local" : "local_to_lv95";
   const label = typeof b?.label === "string" && b.label.trim() ? b.label.trim() : "Standard";
 
   for (const [k, v] of Object.entries({ tE, tN, tH, angleDeg })) {
@@ -35,7 +39,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   const [row] = await db
     .insert(schema.projectTransforms)
-    .values({ projectId: params.id, label, tE, tN, tH, angleDeg, unit })
+    .values({ projectId: params.id, label, tE, tN, tH, angleDeg, unit, direction })
     .returning();
   return NextResponse.json(row, { status: 201 });
 }

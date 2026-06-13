@@ -32,7 +32,12 @@ export async function register() {
       ADD COLUMN IF NOT EXISTS "perimeter" jsonb`);
     await sql.unsafe(`ALTER TABLE "hoehenvergleich"."projects"
       ADD COLUMN IF NOT EXISTS "perimeter_parcels" jsonb`);
-    // Baufortschritt: Strukturmodell-Georef + Auswertungs-Laeufe (Status je GUID).
+    // Eingaberichtung der Georef-Transformation (lokal<->LV95) pro Projekt.
+    await sql.unsafe(`ALTER TABLE "hoehenvergleich"."project_transforms"
+      ADD COLUMN IF NOT EXISTS "direction" text NOT NULL DEFAULT 'local_to_lv95'`);
+    // Baufortschritt: Auswertungs-Laeufe (Status je GUID). (structure_transform
+    // bleibt als ungenutzte Spalte bestehen — Baufortschritt nutzt jetzt die
+    // gemeinsame Projekt-Transformation.)
     await sql.unsafe(`ALTER TABLE "hoehenvergleich"."projects"
       ADD COLUMN IF NOT EXISTS "structure_transform" jsonb`);
     await sql.unsafe(`CREATE TABLE IF NOT EXISTS "hoehenvergleich"."bf_runs" (
