@@ -211,7 +211,8 @@ export function BaufortschrittPanel({
         {model && showPreview && (
           <div style={{ marginTop: 10 }}>
             <div className="small muted" style={{ marginBottom: 6 }}>
-              Ganzes Modell (alle Etappen) zur Kontrolle — oben rechts „Material/Status". Liegt es nicht über der Baustelle, stimmt die Georef nicht.
+              Ganzes Modell (alle Etappen) zur Kontrolle: lädt alles vollständig, sind Bauteile/Form plausibel?
+              (oben rechts „Material/Status"). Georef-Lage prüfst du über „Neu auswerten" eines Scans.
             </div>
             <StatusViewer3D
               url={`${BP}/api/projects/${projectId}/bf-model/preview.glb`}
