@@ -75,6 +75,19 @@ export function fetchDz(
   return fetch(fmt === "png" ? previewPngUrl(jobId, tol) : geotiffUrl(jobId));
 }
 
+/** Eine aus DXF gelesene Polylinie (Bauperimeter/Bereich). */
+export type DxfPolyline = {
+  layer: string; closed: boolean; n: number;
+  points: [number, number][]; area_m2: number; looks_lv95: boolean;
+};
+
+/** DXF (serverseitig) parsen -> geschlossene Polylinien (LV95-Annahme). */
+export async function dxfPolylines(file: Blob, filename: string): Promise<{ polylines: DxfPolyline[] }> {
+  const fd = new FormData();
+  fd.append("file", file, filename);
+  return req<{ polylines: DxfPolyline[] }>(`/dxf/polylines`, { method: "POST", body: fd });
+}
+
 /** Schnitt-Profil entlang Polylinie [[E,N],...] (LV95). */
 export function profile(jobId: string, line: [number, number][], step?: number): Promise<Profile> {
   return req<Profile>(`/jobs/${jobId}/profile`, {

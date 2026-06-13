@@ -13,7 +13,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import engine, pdf, build3d
+from . import engine, pdf, build3d, dxf as dxfmod
 
 app = FastAPI(title="Höhenvergleich Compute", version="0.1.0")
 
@@ -97,6 +97,26 @@ async def _save_upload(up: UploadFile, suffix: str) -> str:
 @app.get("/health")
 def health():
     return {"status": "ok", "jobs": len(_RESULTS)}
+
+
+@app.post("/dxf/polylines")
+async def dxf_polylines(file: UploadFile = File(..., description="DXF (DWG vorher zu DXF exportieren)")):
+    """DXF -> geschlossene Polylinien (für Bauperimeter/Bereiche).
+
+    Liefert { polylines: [{layer, closed, n, points:[[E,N],...], area_m2, looks_lv95}] }.
+    Koordinaten werden unverändert (Meter/LV95-Annahme) zurückgegeben.
+    """
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in {".dxf"}:
+        raise HTTPException(415, "Nur DXF. DWG bitte im CAD nach DXF exportieren.")
+    path = await _save_upload(file, ext)
+    try:
+        polylines = dxfmod.extract_polylines(path)
+    except Exception as e:
+        raise HTTPException(400, f"DXF konnte nicht gelesen werden: {type(e).__name__}: {str(e)[:200]}")
+    finally:
+        _rm(path)
+    return {"polylines": polylines}
 
 
 _SOLL_EXT = {".ifc", ".ifczip", ".obj", ".ply", ".stl", ".gltf", ".glb", ".off", ".3mf", ".dae"}

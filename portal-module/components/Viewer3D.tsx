@@ -24,7 +24,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useToast, Slider } from "@/components/ui";
 import { ProfileChart } from "@/components/ProfileChart";
 import { BP } from "@/lib/api";
-import type { Profile, Scene } from "@/lib/computeClient";
+import type { DxfPolyline, Profile, Scene } from "@/lib/computeClient";
 
 type ViewMode = "3d" | "plan";
 type ColorMode = "dz" | "rgb";
@@ -170,6 +170,13 @@ export function Viewer3D({
   const perimObjRef = useRef<THREE.Group | null>(null);    // gerenderte Perimeter-Linien
   const drawTmpRef = useRef<THREE.Object3D[]>([]);          // Marker/Vorschau beim Zeichnen
   const drawPtsRef = useRef<THREE.Vector3[]>([]);           // laufende Zeichen-Punkte (lokal)
+
+  // DXF-Import (Aushubgrenze/Bereiche) + in dieser Sitzung importierte Bereiche.
+  const [dxfList, setDxfList] = useState<DxfPolyline[] | null>(null);
+  const [dxfBusy, setDxfBusy] = useState(false);
+  const [importedRegions, setImportedRegions] = useState<{ name: string; polygon: [number, number][] }[]>([]);
+  const regionsObjRef = useRef<THREE.Group | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const devRef = useRef<Float32Array | null>(null);  // ΔZ pro Punkt (v2)
   const rgbRef = useRef<Uint8Array | null>(null);     // Echtfarbe pro Punkt
@@ -341,6 +348,10 @@ export function Viewer3D({
       clearCutLines();
       clearDrawTmp();
       disposePerimeterObj();
+      if (regionsObjRef.current) {
+        regionsObjRef.current.traverse((o) => (o as THREE.Line).geometry?.dispose?.());
+        regionsObjRef.current = null;
+      }
       renderer.dispose();
       if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement);
       rendererRef.current = null;
@@ -800,6 +811,77 @@ export function Viewer3D({
     }
   }
 
+  // ---- DXF-Import (Aushubgrenze / Bereiche) ----
+  async function importDxf(file: File) {
+    setDxfBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      const r = await fetch(`${BP}/api/dxf`, { method: "POST", body: fd });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? `Fehler ${r.status}`);
+      const list = (data.polylines as DxfPolyline[]).filter((p) => p.n >= 3);
+      if (!list.length) throw new Error("Keine verwertbaren (geschlossenen) Polylinien im DXF.");
+      setDxfList(list);
+      if (list.some((p) => !p.looks_lv95)) {
+        toast("Achtung: Koordinaten wirken nicht wie LV95 (Meter). Lage prüfen.", "error");
+      }
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setDxfBusy(false);
+    }
+  }
+
+  function assignToPerimeter(pl: DxfPolyline) {
+    setPerimeter((ps) => [...ps, pl.points]);
+    setParcels((ps) => [...ps, { egrid: null, number: `DXF ${pl.layer}`, ak: null }]);
+    setPerimeterDirty(true);
+    toast(`Perimeter aus „${pl.layer}" übernommen.`);
+  }
+
+  async function assignToRegion(pl: DxfPolyline) {
+    try {
+      const r = await fetch(`${BP}/api/comparisons/${comparisonId}/regions`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: pl.layer || "Bereich", polygon: pl.points, tol, save: true }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? `Fehler ${r.status}`);
+      setImportedRegions((rs) => [...rs, { name: pl.layer || "Bereich", polygon: pl.points }]);
+      const v = data.volumes ?? {};
+      toast(`Bereich „${pl.layer}": Cut ${Math.round(v.cut_m3 ?? 0)} / Fill ${Math.round(v.fill_m3 ?? 0)} m³.`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+
+  // Importierte Bereiche (grün) rendern.
+  function renderRegions() {
+    const scene = sceneRef.current;
+    const off = offset();
+    if (regionsObjRef.current) {
+      scene?.remove(regionsObjRef.current);
+      regionsObjRef.current.traverse((o) => (o as THREE.Line).geometry?.dispose?.());
+      regionsObjRef.current = null;
+    }
+    if (!scene || !off || importedRegions.length === 0) return;
+    const group = new THREE.Group();
+    const mat = new THREE.LineBasicMaterial({ color: 0x1aa64b });
+    const z = planZRef.current;
+    for (const reg of importedRegions) {
+      const pts = reg.polygon.map(([E, N]) => new THREE.Vector3(E - off[0], N - off[1], z));
+      group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat));
+    }
+    regionsObjRef.current = group;
+    scene.add(group);
+  }
+
+  useEffect(() => {
+    if (ready) renderRegions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importedRegions, ready]);
+
   // Perimeter rendern, sobald er sich ändert / die Szene bereit ist.
   useEffect(() => {
     perimeterRef.current = perimeter;
@@ -997,6 +1079,43 @@ export function Viewer3D({
                 {drawCount >= 3 && (
                   <button style={{ marginTop: 6 }} onClick={closeDrawPolygon}>Fläche schliessen</button>
                 )}
+              </div>
+            )}
+
+            {/* DXF-Import (Aushubgrenze / Bereiche) */}
+            <div style={{ marginTop: 8 }}>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".dxf"
+                style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void importDxf(f); e.target.value = ""; }}
+              />
+              <button style={{ width: "100%" }} disabled={dxfBusy} onClick={() => fileRef.current?.click()}>
+                {dxfBusy ? "Lese DXF …" : "DXF importieren (Grenze/Bereiche)"}
+              </button>
+              <div className="small muted" style={{ marginTop: 4 }}>DWG vorher im CAD nach DXF exportieren.</div>
+            </div>
+
+            {dxfList && (
+              <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                <div className="spread">
+                  <strong className="small">DXF-Polylinien ({dxfList.length})</strong>
+                  <button style={{ padding: "2px 8px" }} onClick={() => setDxfList(null)}>schliessen</button>
+                </div>
+                {dxfList.map((pl, i) => (
+                  <div key={i} className="panel" style={{ padding: 8 }}>
+                    <div className="small" style={{ marginBottom: 4 }}>
+                      {pl.layer || "(ohne Layer)"} · {pl.area_m2.toLocaleString("de-CH")} m²
+                      {!pl.closed && <span className="muted"> · offen</span>}
+                      {!pl.looks_lv95 && <span style={{ color: "var(--danger,#d33)" }}> · nicht LV95?</span>}
+                    </div>
+                    <div className="grid cols-2">
+                      <button onClick={() => assignToPerimeter(pl)}>als Perimeter</button>
+                      <button onClick={() => void assignToRegion(pl)}>als Bereich</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
