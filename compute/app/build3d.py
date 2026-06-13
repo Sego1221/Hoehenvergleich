@@ -120,8 +120,12 @@ def _deviation_rgb_u8(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
 
 # ----------------------------- Kompakte Binär-Wolke (Three.js-Viewer) -----------------------------
 def export_cloud_bin(result: engine.Result, out_path: str,
-                     max_points: int = 1_500_000, clip: float = 0.30) -> dict:
-    """Ausgedünnte Wolke als kompaktes Binärformat (v2) für den Three.js-Viewer.
+                     max_points: int | None = None, clip: float = 0.30) -> dict:
+    """Wolke als kompaktes Binärformat (v2) für den Three.js-Viewer.
+
+    Standardmässig KEINE Reduktion (alle Punkte) — die Anzeigedichte regelt der
+    Viewer clientseitig. Optional deckelbar via Env HV_CLOUD_MAX_POINTS (Stride),
+    falls Downloads zu gross werden.
 
     Layout (little-endian, Floats 4-aligned, damit Float32Array-Views direkt gehen):
       uint32 count M
@@ -141,8 +145,12 @@ def export_cloud_bin(result: engine.Result, out_path: str,
     offset = np.floor(xyz.min(axis=0))
     bbox_min = xyz.min(axis=0).tolist(); bbox_max = xyz.max(axis=0).tolist()
 
+    # Kein Deckel per Default; optional via Env (z. B. bei sehr grossen Downloads).
+    if max_points is None:
+        env = os.environ.get("HV_CLOUD_MAX_POINTS", "").strip()
+        max_points = int(env) if env.isdigit() and int(env) > 0 else None
     n = xyz.shape[0]
-    step = int(np.ceil(n / max_points)) if n > max_points else 1
+    step = int(np.ceil(n / max_points)) if (max_points and n > max_points) else 1
     xyz = xyz[::step]; dev = dev[::step]
     if rgb is not None:
         rgb = rgb[::step]
