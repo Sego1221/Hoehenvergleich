@@ -168,9 +168,14 @@ export function BaufortschrittPanel({
 
       {sel && (
         <>
-          <div className="small muted">
-            Stand {dateCH(dkey(sel))}: <b style={{ color: COLOR.gebaut }}>{kumGebaut}</b> von {total} Bauteilen gebaut
-            {total ? ` (${Math.round((100 * kumGebaut) / total)} %)` : ""} · kumuliert über alle Scans bis zu diesem Datum.
+          <div className="spread">
+            <div className="small muted">
+              Stand {dateCH(dkey(sel))}: <b style={{ color: COLOR.gebaut }}>{kumGebaut}</b> von {total} Bauteilen gebaut
+              {total ? ` (${Math.round((100 * kumGebaut) / total)} %)` : ""} · kumuliert über alle Scans bis zu diesem Datum.
+            </div>
+            <a href={`${BP}/api/baufortschritt/${sel.id}/pdf`} target="_blank" rel="noopener noreferrer">
+              <button>PDF-Protokoll</button>
+            </a>
           </div>
           <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 1fr", alignItems: "start" }}>
             <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} />
