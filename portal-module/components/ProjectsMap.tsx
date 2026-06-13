@@ -1,11 +1,12 @@
 "use client";
 /**
  * Projekt-Uebersichtskarte (PIX4D-artig) — weltweites Luftbild (Esri World
- * Imagery, Web-Mercator), nicht auf die Schweiz begrenzt. Ein Marker je Projekt
- * am Schwerpunkt seines Bauperimeters; Klick -> Projekt oeffnen. Projekte ohne
- * Perimeter erscheinen nur in der Liste. Koordinaten LV95 -> WGS84 via proj4.
+ * Imagery, Web-Mercator). Fuellt den verfuegbaren Bereich (waechst, wenn die
+ * Sidebar eingeklappt wird; ResizeObserver -> invalidateSize). Statt einer Liste
+ * gibt es ein Suchfeld mit Dropdown OBEN LINKS in der Karte: tippen -> Treffer
+ * -> Projekt oeffnen. Marker je Projekt mit Perimeter; Klick oeffnet ebenfalls.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import "leaflet/dist/leaflet.css";
 
@@ -22,15 +23,29 @@ const LV95 =
   "+k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel " +
   "+towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs";
 
-export default function ProjectsMap({ projects }: { projects: ProjectPin[] }) {
+export default function ProjectsMap({
+  projects, height = 420,
+}: {
+  projects: ProjectPin[];
+  height?: number | string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const router = useRouter();
-  const routerRef = useRef(router);
-  routerRef.current = router;
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const filtered = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return projects.slice(0, 8);
+    return projects
+      .filter((p) => p.name.toLowerCase().includes(t) || (p.ort ?? "").toLowerCase().includes(t))
+      .slice(0, 12);
+  }, [q, projects]);
 
   useEffect(() => {
     let cancelled = false;
+    let ro: ResizeObserver | null = null;
     (async () => {
       const L = (await import("leaflet")).default;
       const proj4 = (await import("proj4")).default;
@@ -41,7 +56,9 @@ export default function ProjectsMap({ projects }: { projects: ProjectPin[] }) {
         return L.latLng(lat, lng);
       };
 
-      const map = L.map(ref.current, { minZoom: 2, maxZoom: 21, worldCopyJump: true });
+      // Zoom-Control nach rechts (Platz fuer das Suchfeld oben links).
+      const map = L.map(ref.current, { minZoom: 2, maxZoom: 21, worldCopyJump: true, zoomControl: false });
+      L.control.zoom({ position: "topright" }).addTo(map);
       mapRef.current = map;
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -61,21 +78,63 @@ export default function ProjectsMap({ projects }: { projects: ProjectPin[] }) {
         }
         const marker = L.circleMarker(ll, { radius: 8, color: "#fff", weight: 2, fillColor: "#20683D", fillOpacity: 1 }).addTo(map);
         marker.bindTooltip(`${p.name}${p.ort ? " · " + p.ort : ""}`, { direction: "top", offset: [0, -6] });
-        marker.on("click", () => routerRef.current.push(`/projects/${p.id}`));
+        marker.on("click", () => router.push(`/projects/${p.id}`));
       }
 
       if (latlngs.length === 1) map.setView(latlngs[0], 17);
       else if (latlngs.length > 1) map.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40], maxZoom: 17 });
       else map.setView([46.8, 8.2], 7);
+
+      // Adaptiv: bei Container-Groessenaenderung (z.B. Sidebar einklappen) neu messen.
+      ro = new ResizeObserver(() => { try { map.invalidateSize(); } catch { /* ignore */ } });
+      ro.observe(ref.current);
       setTimeout(() => { try { map.invalidateSize(); } catch { /* ignore */ } }, 80);
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; ro?.disconnect(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
-      <div ref={ref} style={{ width: "100%", height: 420, cursor: "grab" }} />
+    <div className="panel" style={{ padding: 0, overflow: "hidden", position: "relative", height }}>
+      <div ref={ref} style={{ width: "100%", height: "100%", cursor: "grab" }} />
+
+      {/* Suchfeld + Dropdown (oben links, ueber der Karte) */}
+      <div style={{ position: "absolute", top: 10, left: 10, zIndex: 1100, width: 320, maxWidth: "calc(100% - 20px)" }}>
+        <input
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Projekt suchen …"
+          autoComplete="off"
+          style={{
+            width: "100%", background: "rgba(255,255,255,0.96)",
+            border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+          }}
+        />
+        {open && filtered.length > 0 && (
+          <div
+            className="panel"
+            style={{ marginTop: 4, padding: 4, maxHeight: 280, overflowY: "auto", boxShadow: "0 2px 12px rgba(0,0,0,0.18)" }}
+          >
+            {filtered.map((p) => (
+              <button
+                key={p.id}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => router.push(`/projects/${p.id}`)}
+                style={{ width: "100%", textAlign: "left", display: "flex", justifyContent: "space-between", gap: 8 }}
+              >
+                <span>{p.name}</span>
+                <span className="muted small">{p.ort ?? ""}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {open && q.trim() && filtered.length === 0 && (
+          <div className="panel small muted" style={{ marginTop: 4, padding: "6px 8px" }}>Keine Treffer.</div>
+        )}
+      </div>
     </div>
   );
 }
