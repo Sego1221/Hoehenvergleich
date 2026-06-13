@@ -28,6 +28,8 @@ dz_grid.json
 *.png
 *.tif
 *.pdf
+# Statische Public-Assets (Logo etc.) trotzdem versionieren:
+!portal-module/public/**
 
 # lokale Testdaten (gross, nicht versionieren)
 *.ifc
