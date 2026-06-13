@@ -20,6 +20,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const body = await req.json().catch(() => ({}));
   const patch: Record<string, unknown> = {};
   if (typeof body?.name === "string") patch.name = body.name.trim();
+  if (typeof body?.adresse === "string") patch.adresse = body.adresse.trim() || null;
+  if (typeof body?.ort === "string") patch.ort = body.ort.trim() || null;
   if (typeof body?.notes === "string") patch.notes = body.notes;
   // Bauperimeter setzen/loeschen. perimeter = Liste von Polygonen [[ [E,N],... ],...].
   if ("perimeter" in body) {

@@ -20,13 +20,17 @@ export const metadata: Metadata = {
 };
 
 // App-eigene Navigationspunkte (oben in der Sidebar). Interne Links via
-// next/link (basePath wird automatisch vorangestellt).
-const NAV_ITEMS: ReadonlyArray<SidebarNavItem> = [
-  { label: "Projekte", href: "/", icon: "FolderKanban" },
-];
+// next/link (basePath wird automatisch vorangestellt). "Verwaltung" nur fuer
+// Admins (Projekte anlegen/bearbeiten + Grundlagen Georef/Perimeter).
+const NAV_PROJEKTE: SidebarNavItem = { label: "Projekte", href: "/", icon: "FolderKanban" };
+const NAV_VERWALTUNG: SidebarNavItem = { label: "Verwaltung", href: "/verwaltung", icon: "Settings" };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
+  const isAdmin = (user.roles ?? []).includes("admin");
+  const navItems: ReadonlyArray<SidebarNavItem> = isAdmin
+    ? [NAV_PROJEKTE, NAV_VERWALTUNG]
+    : [NAV_PROJEKTE];
 
   // Modul-Metadaten (Name, Pfad, Icon) server-seitig vom Portal vorladen, damit
   // die Sidebar sofort echte Icons/Labels zeigt (Initialwert). Bei Fehler/
@@ -43,7 +47,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               email={user.email}
               modules={user.modules}
               roles={user.roles}
-              navItems={NAV_ITEMS}
+              navItems={navItems}
               portalApps={portalApps}
               // Portal-Logout: app-übergreifender Gateway-Pfad, ohne basePath.
               logoutHref="/logout"

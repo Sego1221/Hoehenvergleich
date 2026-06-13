@@ -5,9 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { TransformPanel } from "./transform-client";
 import { HistoryAndCompare } from "./compare-client";
-import { PerimeterPanel } from "./perimeter-client";
 
 export const dynamic = "force-dynamic";
 
@@ -34,27 +32,11 @@ export default async function ProjectPage({ params }: { params: { id: string } }
         <div>
           <Link href="/" className="small muted">← Projekte</Link>
           <h2 style={{ margin: "4px 0 0" }}>{project.name}</h2>
+          <div className="small muted">
+            {project.projektNummer}{project.ort ? ` · ${project.ort}` : ""}
+          </div>
         </div>
       </div>
-
-      <div className="grid cols-2" style={{ alignItems: "start" }}>
-        <TransformPanel projectId={params.id} initial={transform ?? null} />
-        <div className="panel">
-          <strong>Hinweis Georeferenzierung</strong>
-          <p className="small muted" style={{ lineHeight: 1.6 }}>
-            Lokale Modellkoordinaten werden nach LV95 (EPSG:2056) transformiert.
-            Konvention: <code>LV95 = Rz(−α) · (lokal − T)</code> mit Translation
-            T = (tE, tN, tH) und Drehung α (Grad, gegen Uhrzeigersinn). Massstab = 1.
-            Einheit beachten (Tekla-Modelle oft in mm).
-          </p>
-        </div>
-      </div>
-
-      <PerimeterPanel
-        projectId={params.id}
-        initialPerimeter={(project.perimeter as [number, number][][] | null) ?? null}
-        initialParcels={(project.perimeterParcels as { egrid: string | null; number: string | null; ak: string | null }[] | null) ?? null}
-      />
 
       <HistoryAndCompare
         projectId={params.id}

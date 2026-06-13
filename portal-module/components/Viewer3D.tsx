@@ -162,7 +162,11 @@ export function Viewer3D({
     initialParcels ?? (initialPerimeter ?? []).map(() => ({ egrid: null, number: null, ak: null })),
   );
   const [perimeterMode, setPerimeterMode] = useState<PerimeterMode>("off");
-  const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
+  // Mit gesetztem Projekt-Perimeter wird die Auswertung standardmaessig auf den
+  // Perimeter beschraenkt (nur Punkte innerhalb).
+  const [cloudFilter, setCloudFilter] = useState<CloudFilter>(
+    (initialPerimeter?.length ?? 0) > 0 ? "inside" : "all",
+  );
   const [perimeterDirty, setPerimeterDirty] = useState(false);
   const [savingPerimeter, setSavingPerimeter] = useState(false);
   const [drawCount, setDrawCount] = useState(0);     // Punkte im laufenden Zeichnen

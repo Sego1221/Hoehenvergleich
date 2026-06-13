@@ -121,9 +121,10 @@ tr:hover td { background: var(--surface-2); }
   background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
 
 /* ---- Layout-Shell ---- */
-.shell { display: grid; grid-template-columns: auto 1fr; min-height: 100vh; }
-.sidebar { background: var(--side-bg); border-right: 1px solid var(--border); }
-.content { padding: 18px 22px; max-width: 1500px; }
+/* Sidebar in fester Hoehe (100vh), nur der Inhalt scrollt. */
+.shell { display: grid; grid-template-columns: auto 1fr; height: 100vh; overflow: hidden; }
+.sidebar { background: var(--side-bg); border-right: 1px solid var(--border); height: 100vh; position: sticky; top: 0; }
+.content { padding: 18px 22px; max-width: 1500px; height: 100vh; overflow-y: auto; }
 
 .leaflet-container { background: #eef2f6; }
 

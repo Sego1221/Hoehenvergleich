@@ -86,7 +86,6 @@ function NewComparisonDialog({
   const [tol, setTol] = useState(0.05);
   const [groundPct, setGroundPct] = useState(10);
   const [useVeg, setUseVeg] = useState(false);
-  const [useTransform, setUseTransform] = useState(hasTransform);
   const [busy, setBusy] = useState(false);
 
   async function start() {
@@ -102,7 +101,9 @@ function NewComparisonDialog({
       fd.append("tol", String(tol));
       fd.append("ground_pct", String(groundPct));
       fd.append("use_veg", String(useVeg));
-      if (useTransform) {
+      // Georef-Transformation ist eine Projekt-Grundlage -> immer automatisch
+      // anwenden (keine Frage pro Messung).
+      if (hasTransform) {
         const tr = await fetch(`${BP}/api/projects/${projectId}/transform`).then((r) => r.json());
         if (tr) fd.append("transform", JSON.stringify(tr));
       }
@@ -174,10 +175,9 @@ function NewComparisonDialog({
             <input type="checkbox" style={{ width: "auto" }} checked={useVeg} onChange={(e) => setUseVeg(e.target.checked)} />
             <span>Vegetation filtern (ExG)</span>
           </label>
-          <label className="row" style={{ gap: 6, marginBottom: 0, opacity: hasTransform ? 1 : 0.5 }}>
-            <input type="checkbox" style={{ width: "auto" }} disabled={!hasTransform} checked={useTransform} onChange={(e) => setUseTransform(e.target.checked)} />
-            <span>Projekt-Transformation anwenden{hasTransform ? "" : " (keine vorhanden)"}</span>
-          </label>
+          <span className="small muted">
+            {hasTransform ? "Projekt-Georeferenzierung wird automatisch angewendet." : "Keine Projekt-Georeferenzierung hinterlegt."}
+          </span>
         </div>
       </div>
     </Dialog>

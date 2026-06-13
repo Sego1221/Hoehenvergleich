@@ -5,7 +5,6 @@ import Link from "next/link";
 import { desc } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { dateCH } from "@/lib/format";
-import { NewProject } from "./projects-client";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +21,6 @@ export default async function HomePage() {
     <div className="grid" style={{ gap: 18 }}>
       <div className="spread">
         <h2 style={{ margin: 0 }}>Projekte</h2>
-        <NewProject />
       </div>
 
       {dbError && (
