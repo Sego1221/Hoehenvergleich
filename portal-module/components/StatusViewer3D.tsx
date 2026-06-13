@@ -92,6 +92,9 @@ export default function StatusViewer3D({
       root.traverse((o) => {
         const m = o as THREE.Mesh;
         if (!m.isMesh) return;
+        // Das trimesh-GLB wird ohne Normalen exportiert -> MeshStandardMaterial
+        // rendert ohne Normalen schwarz. Daher hier bei Bedarf nachberechnen.
+        if (m.geometry && !m.geometry.getAttribute("normal")) m.geometry.computeVertexNormals();
         let nm = o.name || "";
         let p: THREE.Object3D | null = o;
         while (p && !nm.startsWith("bf_")) { p = p.parent; nm = p?.name ?? ""; }
