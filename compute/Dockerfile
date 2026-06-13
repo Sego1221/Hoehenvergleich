@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # PotreeConverter 2.x (prebuilt Linux-x64-Release von GitHub) installieren.
 # Erzeugt Potree-2.0-Octrees (metadata.json/hierarchy.bin/octree.bin).
-ARG POTREE_URL=https://github.com/potree/PotreeConverter/releases/download/2.1.1/PotreeConverter_linux_x64.zip
+ARG POTREE_URL=https://github.com/potree/PotreeConverter/releases/download/2.1.1/PotreeConverter_2.1.1_x64_linux.zip
 RUN mkdir -p /opt/potree && \
     curl -fsSL "$POTREE_URL" -o /tmp/potree.zip && \
     unzip -o /tmp/potree.zip -d /opt/potree && \
