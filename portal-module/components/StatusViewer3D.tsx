@@ -24,13 +24,15 @@ export default function StatusViewer3D({
   url: string; statusByGuid: Record<string, string>; guids: (string | null)[]; height?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const meshesRef = useRef<{ guid: string; mesh: THREE.Mesh }[]>([]);
+  const meshesRef = useRef<{ guid: string; mesh: THREE.Mesh; orig: THREE.Material }[]>([]);
   const matsRef = useRef<Record<string, THREE.Material>>({});
   const mapRef = useRef(statusByGuid);
   const guidsRef = useRef(guids);
   const visRef = useRef<Record<string, boolean>>({ gebaut: true, nicht_gebaut: true, verdeckt: true, nicht_erfasst: true });
+  const modeRef = useRef<"status" | "material">("status");
   const [status, setStatus] = useState("Lade Modell …");
   const [vis, setVis] = useState<Record<string, boolean>>(visRef.current);
+  const [mode, setMode] = useState<"status" | "material">("status");
   mapRef.current = statusByGuid;
   guidsRef.current = guids;
 
@@ -40,9 +42,12 @@ export default function StatusViewer3D({
   }, [statusByGuid]);
 
   function applyColorsVis() {
-    for (const { guid, mesh } of meshesRef.current) {
+    const m = modeRef.current;
+    for (const { guid, mesh, orig } of meshesRef.current) {
       const st = mapRef.current[guid] ?? "nicht_erfasst";
-      mesh.material = matsRef.current[st] ?? matsRef.current.nicht_erfasst;
+      mesh.material = m === "material"
+        ? orig
+        : (matsRef.current[st] ?? matsRef.current.nicht_erfasst);
       mesh.visible = visRef.current[st] !== false;
     }
   }
@@ -59,6 +64,8 @@ export default function StatusViewer3D({
     const dir = new THREE.DirectionalLight(0xffffff, 0.7); dir.position.set(1, 1, 2); scene.add(dir);
     const dir2 = new THREE.DirectionalLight(0xffffff, 0.4); dir2.position.set(-1, -1, 1); scene.add(dir2);
     for (const s of STATUSES) matsRef.current[s.key] = new THREE.MeshStandardMaterial({ color: s.color, metalness: 0, roughness: 0.9, side: THREE.DoubleSide });
+    // Original-(IFC-)Material: vertexColors aus GLB nutzen, doppelseitig.
+    const origMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.9, side: THREE.DoubleSide });
     const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100000); cam.up.set(0, 0, 1);
     const controls = new OrbitControls(cam, renderer.domElement); controls.enableDamping = true;
     const resize = () => { const w = el.clientWidth || 1; const h = el.clientHeight || 1; renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); };
@@ -91,7 +98,7 @@ export default function StatusViewer3D({
         } catch { return ""; }
       };
       const list = mns.map(({ mesh, nodeName }, i) => ({
-        guid: (decode(nodeName) || gs[i] || "") as string, mesh,
+        guid: (decode(nodeName) || gs[i] || "") as string, mesh, orig: origMat,
       }));
       meshesRef.current = list; applyColorsVis();
       const box = new THREE.Box3().setFromObject(root);
@@ -121,6 +128,14 @@ export default function StatusViewer3D({
   return (
     <div className="panel" style={{ padding: 0, overflow: "hidden", position: "relative", height }}>
       <div ref={ref} style={{ position: "absolute", inset: 0 }} />
+      {/* Modus-Umschalter (oben rechts) */}
+      <div style={{ position: "absolute", top: 10, right: 10, zIndex: 5, display: "flex", gap: 4,
+        background: "rgba(255,255,255,0.92)", border: "1px solid var(--border)", borderRadius: 8, padding: 3 }}>
+        <button onClick={() => { modeRef.current = "status"; setMode("status"); applyColorsVis(); }}
+          className={mode === "status" ? "primary" : ""} style={{ padding: "3px 10px" }}>Status</button>
+        <button onClick={() => { modeRef.current = "material"; setMode("material"); applyColorsVis(); }}
+          className={mode === "material" ? "primary" : ""} style={{ padding: "3px 10px" }}>Material</button>
+      </div>
       <div style={{ position: "absolute", top: 10, left: 10, zIndex: 5, display: "grid", gap: 4 }}>
         {present.map((s) => (
           <button key={s.key} onClick={() => toggle(s.key)}

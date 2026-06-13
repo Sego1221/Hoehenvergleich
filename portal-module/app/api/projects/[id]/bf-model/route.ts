@@ -47,7 +47,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
 
-  const ifcNames = [...new Set([...(existing?.ifcNames as string[] | null ?? []), ...files.map((f) => f.name)])];
+  const ifcNames = (result.files ?? []).map((f) => f.name);
+  const ifcColors: Record<string, [number, number, number]> = {};
+  for (const e of result.elements ?? []) if (e.guid && e.color) ifcColors[e.guid] = e.color;
   const values = {
     projectId: params.id,
     computeModelId: result.model_id,
@@ -55,6 +57,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     betonagen: result.betonagen as unknown as Record<string, unknown>,
     elements: result.elements as unknown as Record<string, unknown>,
     ifcNames: ifcNames as unknown as Record<string, unknown>,
+    files: (result.files ?? []) as unknown as Record<string, unknown>,
+    ifcColors: ifcColors as unknown as Record<string, unknown>,
     updatedAt: new Date(),
   };
   let row;

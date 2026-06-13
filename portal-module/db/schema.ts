@@ -95,7 +95,9 @@ export const bfModel = hv.table("bf_model", {
   nElements: integer("n_elements"),
   betonagen: jsonb("betonagen"),   // string[]
   elements: jsonb("elements"),     // [{ guid, name, bauteil, betonage, material, kote_ok, kote_uk }]
-  ifcNames: jsonb("ifc_names"),    // string[] der hochgeladenen Etappen
+  ifcNames: jsonb("ifc_names"),    // string[] der hochgeladenen Etappen (Anzeige)
+  files: jsonb("files"),           // [{ name, size, uploadedAt }] aktive Etappen-Dateien
+  ifcColors: jsonb("ifc_colors"),  // { guid: [r,g,b] } Standardfarben aus IFC
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ byProject: index("bf_model_project_idx").on(t.projectId) }));
 

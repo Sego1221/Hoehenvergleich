@@ -40,6 +40,7 @@ export default async function BaufortschrittPage({ params }: { params: { id: str
         nElements: bfModelRow.nElements,
         betonagen: bfModelRow.betonagen as string[] | null,
         ifcNames: bfModelRow.ifcNames as string[] | null,
+        files: bfModelRow.files as { name: string; size: number; mtime?: number }[] | null,
         elements: bfModelRow.elements as { guid: string | null; name: string | null; betonage: string | null }[] | null,
       } : null}
       initialRuns={runs.map((r) => ({

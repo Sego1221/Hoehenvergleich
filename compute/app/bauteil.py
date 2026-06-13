@@ -33,11 +33,32 @@ def _ifc_value(prod, pname):
     return None
 
 
-def load_structural_elements(ifc_path: str) -> list[dict]:
-    """Struktur-IFC -> Liste von Bauteilen mit Geometrie (lokal, Meter) + Attributen.
+def _ifc_color(prod) -> tuple[int, int, int] | None:
+    """RGB (0..255) aus IfcSurfaceStyleRendering des Produkts, sonst None."""
+    try:
+        for rep in (prod.Representation.Representations if getattr(prod, "Representation", None) else []) or []:
+            for it in rep.Items or []:
+                for si in getattr(it, "StyledByItem", []) or []:
+                    for sty in si.Styles or []:
+                        candidates = []
+                        if sty.is_a("IfcPresentationStyleAssignment"):
+                            candidates = sty.Styles or []
+                        else:
+                            candidates = [sty]
+                        for s in candidates:
+                            if s.is_a("IfcSurfaceStyle"):
+                                for r in s.Styles or []:
+                                    if r.is_a("IfcSurfaceStyleRendering") or r.is_a("IfcSurfaceStyleShading"):
+                                        c = r.SurfaceColour
+                                        return (int(c.Red * 255), int(c.Green * 255), int(c.Blue * 255))
+    except Exception:
+        return None
+    return None
 
-    Filtert entartete Hilfsobjekte (< _MIN_VERTS Vertices) heraus.
-    """
+
+def load_structural_elements(ifc_path: str) -> list[dict]:
+    """Struktur-IFC -> Liste von Bauteilen mit Geometrie (lokal, Meter) + Attributen
+    + IFC-Standardfarbe. Hilfsobjekte (< _MIN_VERTS Vertices) werden gefiltert."""
     import ifcopenshell, ifcopenshell.geom as geom
     f = ifcopenshell.open(ifc_path)
     s = geom.settings(); s.set("use-world-coords", True)
@@ -50,6 +71,7 @@ def load_structural_elements(ifc_path: str) -> list[dict]:
             fa = np.asarray(sh.geometry.faces, dtype=np.int64).reshape(-1, 3)
             if len(v) >= _MIN_VERTS:
                 prod = f.by_id(sh.id)
+                col = _ifc_color(prod)
                 out.append({
                     "guid": getattr(prod, "GlobalId", None),
                     "name": getattr(prod, "Name", None),
@@ -58,6 +80,7 @@ def load_structural_elements(ifc_path: str) -> list[dict]:
                     "material": _ifc_value(prod, "Material"),
                     "kote_ok": _ifc_value(prod, "Kote OK"),
                     "kote_uk": _ifc_value(prod, "Kote UK"),
+                    "color": list(col) if col else None,
                     "V": v, "F": fa,
                 })
             if not it.next():
@@ -298,9 +321,12 @@ def evaluate_scan(catalog: list[dict], transform: dict, cloud_path: str,
         summ[st] = sum(r["status"] == st for r in rows)
     scene = None
     if out_glb:
-        scene = _status_glb(Vs, [e["F"] for e in catalog], [e["guid"] for e in catalog], out_glb)
+        scene = _status_glb_with_colors(Vs, [e["F"] for e in catalog],
+                                        [e["guid"] for e in catalog],
+                                        [e.get("color") for e in catalog], out_glb)
     return {"summary": summ, "elements": rows, "transform_flipped": flipped,
-            "transform_warning": (flipped is None), "scene": scene}
+            "transform_warning": (flipped is None), "scene": scene,
+            "ifc_colors": {e["guid"]: e.get("color") for e in catalog if e["guid"]}}
 
 
 def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
@@ -320,6 +346,26 @@ def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
     if hits(flip):
         return flip, True
     return transform, None
+
+
+def _status_glb_with_colors(Vs: list, Fs: list, guids: list, colors: list, out_glb: str) -> dict:
+    """Wie _status_glb, aber faerbt jedes Bauteil per Vertex-Color mit seiner
+    IFC-Standardfarbe (Fallback hellgrau). Viewer kann zur Laufzeit auf Status
+    umschalten, ohne das GLB neu zu laden."""
+    import trimesh
+    allV = np.vstack(Vs); offset = np.floor(allV.min(axis=0))
+    scene = trimesh.Scene()
+    for i, (V, F, g, c) in enumerate(zip(Vs, Fs, guids, colors)):
+        m = trimesh.Trimesh(vertices=(V - offset).astype(np.float32), faces=F, process=False)
+        col = c if (c and len(c) == 3) else (200, 200, 205)
+        m.visual.vertex_colors = np.tile(np.array([*col, 255], np.uint8), (len(m.vertices), 1))
+        gid = str(g or f"i{i}")
+        name = "bf_" + gid.encode("utf-8").hex()
+        scene.add_geometry(m, geom_name=name, node_name=name)
+    scene.export(out_glb, file_type="glb")
+    return {"offset": offset.tolist(),
+            "bbox_min": allV.min(axis=0).tolist(), "bbox_max": allV.max(axis=0).tolist(),
+            "bytes": int(os.path.getsize(out_glb))}
 
 
 def _status_glb(Vs: list, Fs: list, guids: list, out_glb: str) -> dict:

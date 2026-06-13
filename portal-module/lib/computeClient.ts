@@ -115,11 +115,26 @@ export async function bauteilEvaluate(
 /** Status-GLB eines Baufortschritt-Laufs (vom Compute-Volume). */
 export const statusGlbUrl = (jobId: string) => `${BASE}/jobs/${jobId}/status.glb`;
 
+export type BfModelFile = { name: string; size: number; mtime?: number };
 export type BfModelResult = {
   model_id: string; n_elements: number; betonagen: string[];
   elements: { guid: string | null; name: string | null; bauteil: string | null;
-    betonage: string | null; material: string | null; kote_ok: string | null; kote_uk: string | null }[];
+    betonage: string | null; material: string | null; kote_ok: string | null; kote_uk: string | null;
+    color?: [number, number, number] | null }[];
+  files?: BfModelFile[];
 };
+
+/** Liste der Etappen-Dateien eines Modells. */
+export async function bauteilModelFiles(modelId: string): Promise<{ files: BfModelFile[] }> {
+  return req<{ files: BfModelFile[] }>(`/bauteil/model/${modelId}/files`);
+}
+
+/** Etappen-IFC loeschen + Katalog neu aufbauen. */
+export async function bauteilModelDeleteFile(modelId: string, name: string): Promise<BfModelResult> {
+  const r = await fetch(`${BASE}/bauteil/model/${modelId}/files/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(`Compute ${r.status}: ${await r.text()}`);
+  return r.json() as Promise<BfModelResult>;
+}
 
 /** Modell-Katalog anlegen/ergaenzen: mehrere IFCs + Projekt-Georef (forward). */
 export async function bauteilModel(

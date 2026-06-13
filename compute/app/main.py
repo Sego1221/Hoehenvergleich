@@ -167,14 +167,20 @@ async def bauteil_model(
     mid = (model_id or uuid.uuid4().hex[:12]).strip()
     mdir = bauteil.model_dir(mid)
     srcdir = os.path.join(mdir, "src"); os.makedirs(srcdir, exist_ok=True)
+    # Dateien unter ihrem ORIGINAL-Namen ablegen (sanitisiert) — Re-Upload
+    # ueberschreibt die vorhandene Etappe (Ersetzen).
+    saved: list[dict] = []
+    import re as _re
     for up in ifcs:
         ext = os.path.splitext(up.filename or "")[1].lower()
         if ext not in (".ifc", ".ifczip"):
             raise HTTPException(415, f"Nur IFC erlaubt ({up.filename}).")
-        dst = os.path.join(srcdir, uuid.uuid4().hex[:8] + ext)
+        safe = _re.sub(r"[^\w.\-äöüÄÖÜ]+", "_", os.path.basename(up.filename or "etappe.ifc"))
+        dst = os.path.join(srcdir, safe)
         with open(dst, "wb") as fh:
             while chunk := await up.read(1 << 20):
                 fh.write(chunk)
+        saved.append({"name": safe, "size": os.path.getsize(dst)})
     import glob as _glob
     paths = sorted(_glob.glob(os.path.join(srcdir, "*.ifc")) + _glob.glob(os.path.join(srcdir, "*.ifczip")))
     try:
@@ -184,7 +190,60 @@ async def bauteil_model(
         raise HTTPException(422, str(e))
     except Exception as e:
         raise HTTPException(400, f"Modellaufbau fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
-    return {"model_id": mid, **summary}
+    files = _list_model_files(srcdir)
+    return {"model_id": mid, "files": files, "uploaded": saved, **summary}
+
+
+def _list_model_files(srcdir: str) -> list[dict]:
+    import glob as _glob
+    out = []
+    for p in sorted(_glob.glob(os.path.join(srcdir, "*.ifc")) + _glob.glob(os.path.join(srcdir, "*.ifczip"))):
+        try:
+            st = os.stat(p)
+            out.append({"name": os.path.basename(p), "size": st.st_size, "mtime": st.st_mtime})
+        except OSError:
+            pass
+    return out
+
+
+@app.get("/bauteil/model/{model_id}/files")
+def bauteil_model_files(model_id: str):
+    """Liste der gespeicherten Etappen-IFCs des Modells."""
+    mdir = bauteil.model_dir(model_id)
+    return {"files": _list_model_files(os.path.join(mdir, "src"))}
+
+
+@app.delete("/bauteil/model/{model_id}/files/{name}")
+def bauteil_model_file_delete(model_id: str, name: str):
+    """Etappen-IFC loeschen + Katalog neu aufbauen (gleiche Transform)."""
+    mdir = bauteil.model_dir(model_id)
+    srcdir = os.path.join(mdir, "src")
+    # Pfadtraversal-Schutz.
+    safe = os.path.basename(name)
+    target = os.path.join(srcdir, safe)
+    if not os.path.exists(target):
+        raise HTTPException(404, "Datei nicht gefunden.")
+    try:
+        catalog_old, tf = bauteil.load_model(mdir)
+    except ValueError:
+        tf = None
+    try: os.remove(target)
+    except OSError as e: raise HTTPException(500, f"Loeschen fehlgeschlagen: {e}")
+    import glob as _glob
+    paths = sorted(_glob.glob(os.path.join(srcdir, "*.ifc")) + _glob.glob(os.path.join(srcdir, "*.ifczip")))
+    summary = {"n_elements": 0, "betonagen": [], "elements": []}
+    if paths and tf is not None:
+        try:
+            catalog = bauteil.build_catalog(paths)
+            summary = bauteil.save_model(mdir, catalog, tf)
+        except Exception as e:
+            raise HTTPException(400, f"Katalog-Neuaufbau fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
+    elif not paths:
+        # Letzte Etappe entfernt -> Katalog leeren (Geometrie+Transform).
+        for f in ("catalog.pkl", "catalog.json"):
+            try: os.remove(os.path.join(mdir, f))
+            except OSError: pass
+    return {"model_id": model_id, "files": _list_model_files(srcdir), **summary}
 
 
 @app.post("/bauteil/model/{model_id}/scan")

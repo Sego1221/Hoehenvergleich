@@ -17,6 +17,7 @@ const StatusViewer3D = dynamicImport(() => import("@/components/StatusViewer3D")
 type Model = {
   id: string; computeModelId: string; nElements: number | null;
   betonagen: string[] | null; ifcNames: string[] | null;
+  files: { name: string; size: number; mtime?: number }[] | null;
   elements: { guid: string | null; name: string | null; betonage: string | null }[] | null;
 };
 type Run = {
@@ -102,6 +103,19 @@ export function BaufortschrittPanel({
     finally { setBusy(false); }
   }
 
+  async function removeFile(name: string) {
+    if (!model) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`${BP}/api/projects/${projectId}/bf-model/files/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? `Fehler ${r.status}`);
+      setModel(data as Model);
+      toast(`Etappe „${name}" entfernt — Katalog: ${data.nElements} Bauteile.`);
+    } catch (e) { toast((e as Error).message, "error"); }
+    finally { setBusy(false); }
+  }
+
   if (!hasTransform) {
     return (
       <div className="panel">
@@ -124,15 +138,34 @@ export function BaufortschrittPanel({
             <input ref={modelFileRef} type="file" accept=".ifc,.ifczip" multiple style={{ display: "none" }}
               onChange={(e) => { if (e.target.files?.length) void uploadModel(e.target.files); e.target.value = ""; }} />
             <button disabled={busy} onClick={() => modelFileRef.current?.click()}>
-              {busy ? "Lädt …" : model ? "Etappen ergänzen" : "Etappen-IFCs hochladen"}
+              {busy ? "Lädt …" : model ? "Etappen ergänzen / ersetzen" : "Etappen-IFCs hochladen"}
             </button>
           </div>
         </div>
         {model ? (
-          <div className="small muted" style={{ marginTop: 6 }}>
-            {model.nElements} Bauteile · Betonagen: {(model.betonagen ?? []).join(", ") || "—"}
-            {model.ifcNames?.length ? ` · ${model.ifcNames.length} IFC(s)` : ""}
-          </div>
+          <>
+            <div className="small muted" style={{ marginTop: 6 }}>
+              {model.nElements} Bauteile · Betonagen: {(model.betonagen ?? []).join(", ") || "—"}
+            </div>
+            {(model.files?.length ?? 0) > 0 && (
+              <div className="grid" style={{ gap: 4, marginTop: 8 }}>
+                <div className="small muted">Etappen-Dateien ({model.files?.length}):</div>
+                <div style={{ display: "grid", gap: 2, maxHeight: 220, overflowY: "auto" }}>
+                  {(model.files ?? []).map((f) => (
+                    <div key={f.name} className="spread small" style={{ alignItems: "center", padding: "2px 0" }}>
+                      <span style={{ fontFamily: "var(--mono, monospace)" }}>{f.name}</span>
+                      <div className="row" style={{ display: "flex", gap: 6 }}>
+                        <span className="muted" style={{ fontSize: 11 }}>{(f.size / 1024).toFixed(0)} KB</span>
+                        <button style={{ padding: "1px 8px" }} title="Entfernen"
+                          onClick={() => void removeFile(f.name)}>x</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="small muted">Re-Upload mit gleichem Dateinamen <b>ersetzt</b> die Etappe; Auswertungen mit neuem Scan wiederholen.</div>
+              </div>
+            )}
+          </>
         ) : (
           <div className="small muted" style={{ marginTop: 6 }}>
             Lade alle Etappen-IFCs (Bodenplatte + Wände …) einmal hoch. Danach täglich nur den Scan.
