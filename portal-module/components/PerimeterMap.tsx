@@ -3,12 +3,14 @@
  * Leaflet-Karte (EPSG:2056 / LV95) zum Festlegen des PROJEKT-Bauperimeters —
  * unabhaengig von einem Vergleich. Swisstopo SWISSIMAGE als Basiskarte.
  *
+ * WICHTIG zur Projektion: Bei L.Proj.CRS sind die Karten-LatLng WGS84-GRAD.
+ * LV95-Koordinaten (E,N) werden via crs.project()/unproject() umgerechnet:
+ *   [E,N] = crs.project(latlng) -> {x:E, y:N};  latlng = crs.unproject(point(E,N)).
+ *
  * Modi:
- *  - "parcel": Klick auf eine Parzelle -> onPick(E,N) (Aufrufer holt die Grenze
- *    aus der amtlichen Vermessung),
+ *  - "parcel": Klick -> onPick(E,N) (Aufrufer holt die Grenze aus der amtl. Verm.),
  *  - "draw":  Punkte klicken, Doppelklick schliesst -> onDrawn([[E,N],...]),
  *  - "view":  nur ansehen.
- * Bereits gesetzte Perimeter-Polygone werden orange gezeichnet.
  */
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
@@ -30,8 +32,9 @@ const RESOLUTIONS = [
 export default function PerimeterMap(props: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const Lref = useRef<any>(null);
   const layerRef = useRef<any>(null);
-  const draftRef = useRef<[number, number][]>([]);
+  const draftRef = useRef<[number, number][]>([]); // LV95 [E,N]
   const modeRef = useRef<PMapMode>(props.mode);
   const onPickRef = useRef(props.onPick);
   const onDrawnRef = useRef(props.onDrawn);
@@ -42,6 +45,15 @@ export default function PerimeterMap(props: Props) {
   onDrawnRef.current = props.onDrawn;
   perimRef.current = props.perimeter;
 
+  // LV95 <-> Karten-LatLng.
+  function enToLatLng(e: number, n: number): any {
+    return mapRef.current.options.crs.unproject(Lref.current.point(e, n));
+  }
+  function latlngToEn(latlng: any): [number, number] {
+    const p = mapRef.current.options.crs.project(latlng);
+    return [p.x, p.y];
+  }
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -49,6 +61,7 @@ export default function PerimeterMap(props: Props) {
       const proj4 = (await import("proj4")).default;
       await import("proj4leaflet");
       if (cancelled || !ref.current || mapRef.current) return;
+      Lref.current = L;
 
       proj4.defs(
         "EPSG:2056",
@@ -72,23 +85,21 @@ export default function PerimeterMap(props: Props) {
 
       layerRef.current = L.layerGroup().addTo(map);
 
-      // Auf vorhandenen Perimeter zoomen, sonst Aarau-Region (Birchmeier).
+      // Auf vorhandenen Perimeter zoomen, sonst Birchmeier-Region (Döttingen, WGS84).
       const p = perimRef.current;
       if (p.length) {
-        const all = p.flat();
-        const es = all.map((c) => c[0]); const ns = all.map((c) => c[1]);
-        map.fitBounds([[Math.min(...ns), Math.min(...es)], [Math.max(...ns), Math.max(...es)]] as any, { padding: [20, 20] });
+        fitPerimeter();
       } else {
-        map.setView([1247000, 2660000] as any, 16);
+        map.setView([47.567, 8.253] as any, 19);
       }
 
       map.on("click", (e: any) => {
-        const E = e.latlng.lng, N = e.latlng.lat; // lng=E, lat=N
+        const [E, N] = latlngToEn(e.latlng);
         if (modeRef.current === "parcel") {
           onPickRef.current(E, N);
         } else if (modeRef.current === "draw") {
           draftRef.current = [...draftRef.current, [E, N]];
-          redraw(L);
+          redraw();
         }
       });
       map.on("dblclick", (e: any) => {
@@ -96,40 +107,42 @@ export default function PerimeterMap(props: Props) {
         if (modeRef.current === "draw" && draftRef.current.length >= 3) {
           onDrawnRef.current(draftRef.current);
           draftRef.current = [];
-          redraw(L);
+          redraw();
         }
       });
 
+      // Container hatte beim Init evtl. noch keine Endgrösse -> Tiles nachladen.
+      setTimeout(() => { try { map.invalidateSize(); } catch { /* ignore */ } }, 80);
       setReady(true);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => { modeRef.current = props.mode; draftRef.current = []; void redrawAsync(); }, [props.mode]); // eslint-disable-line
-  useEffect(() => { void redrawAsync(); }, [props.perimeter, ready]); // eslint-disable-line
+  useEffect(() => { modeRef.current = props.mode; draftRef.current = []; redraw(); }, [props.mode]); // eslint-disable-line
+  useEffect(() => { if (ready) { redraw(); fitPerimeter(); } }, [props.perimeter, ready]); // eslint-disable-line
 
-  async function redrawAsync() {
-    const L = (await import("leaflet")).default;
-    redraw(L);
+  function fitPerimeter() {
+    const map = mapRef.current;
+    if (!map || perimRef.current.length === 0) return;
+    const ll = perimRef.current.flat().map(([e, n]) => enToLatLng(e, n));
+    try { map.fitBounds(Lref.current.latLngBounds(ll), { padding: [20, 20], maxZoom: 21 }); } catch { /* ignore */ }
   }
 
-  function redraw(L: any) {
+  function redraw() {
+    const L = Lref.current;
     const layer = layerRef.current;
-    if (!layer) return;
+    if (!L || !layer || !mapRef.current) return;
     layer.clearLayers();
-    // Gespeicherte/aktuelle Perimeter-Polygone (orange).
     for (const poly of perimRef.current) {
-      L.polygon(poly.map(([e, n]) => [n, e]) as any, {
-        color: "#ff8c1a", weight: 2, fillOpacity: 0.12,
-      }).addTo(layer);
+      const ll = poly.map(([e, n]) => enToLatLng(e, n));
+      L.polygon(ll as any, { color: "#ff8c1a", weight: 2, fillOpacity: 0.12 }).addTo(layer);
     }
-    // Aktueller Zeichen-Entwurf.
     const d = draftRef.current;
     if (d.length) {
-      const pts = d.map(([e, n]) => [n, e]);
-      L.polygon(pts as any, { color: "#ff8c1a", weight: 2, dashArray: "4 4", fillOpacity: 0.05 }).addTo(layer);
-      pts.forEach((p) => L.circleMarker(p as any, { radius: 3, color: "#fff" }).addTo(layer));
+      const ll = d.map(([e, n]) => enToLatLng(e, n));
+      L.polygon(ll as any, { color: "#ff8c1a", weight: 2, dashArray: "4 4", fillOpacity: 0.05 }).addTo(layer);
+      ll.forEach((p: any) => L.circleMarker(p, { radius: 3, color: "#fff" }).addTo(layer));
     }
   }
 
