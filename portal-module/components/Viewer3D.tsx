@@ -118,6 +118,9 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   const [dzRange, setDzRange] = useState(0.3);
   const [stops, setStops] = useState<Stops>(PRESETS[0].stops);
   const stopsRef = useRef<Stops>(PRESETS[0].stops);
+  const [toolsOpen, setToolsOpen] = useState(true);   // Werkzeug-Spalte ein/aus
+  const [fsActive, setFsActive] = useState(false);    // Vollbild
+  const stageRef = useRef<HTMLDivElement>(null);
   const devRef = useRef<Float32Array | null>(null);  // ΔZ pro Punkt (v2)
   const rgbRef = useRef<Uint8Array | null>(null);     // Echtfarbe pro Punkt
   const cloudCountRef = useRef(0);
@@ -430,6 +433,19 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorMode, dzRange, stops, ready]);
 
+  // ------------------------------------------- Vollbild ----------------------
+  useEffect(() => {
+    const onFs = () => setFsActive(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  function toggleFullscreen() {
+    const el = stageRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else el.requestFullscreen?.();
+  }
+
   // ------------------------------------------------ Schnitt: Punkt picken ----
   // Raycast gegen Punkte/Mesh; Fallback auf horizontale Ebene z = bbox-Mitte.
   function pickPoint(ev: MouseEvent): THREE.Vector3 | null {
@@ -564,16 +580,61 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
 
   return (
     <div className="grid" style={{ gap: 12 }}>
-      <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 300px", alignItems: "start" }}>
+      <div
+        className="grid"
+        style={{
+          gap: 12,
+          gridTemplateColumns: toolsOpen ? "1fr 300px" : "1fr",
+          alignItems: "start",
+        }}
+      >
         {/* Viewer-Bühne */}
         <div
+          ref={stageRef}
           className="panel"
-          style={{ position: "relative", padding: 0, overflow: "hidden", height: "70vh", minHeight: 460 }}
+          style={{
+            position: "relative",
+            padding: 0,
+            overflow: "hidden",
+            height: fsActive ? "100vh" : "70vh",
+            minHeight: 460,
+            background: "#0f1115",
+          }}
         >
           <div
             ref={containerRef}
             style={{ position: "absolute", inset: 0, cursor: cutMode ? "crosshair" : "grab" }}
           />
+          {/* Steuerknöpfe oben rechts: Werkzeuge ein/aus + Vollbild */}
+          <div
+            style={{
+              position: "absolute", top: 10, right: 10, zIndex: 6,
+              display: "flex", gap: 6,
+            }}
+          >
+            <button
+              onClick={() => setToolsOpen((v) => !v)}
+              title={toolsOpen ? "Werkzeuge ausblenden" : "Werkzeuge einblenden"}
+              style={{
+                background: "rgba(0,0,0,0.55)", color: "#fff",
+                border: "1px solid rgba(255,255,255,0.25)", borderRadius: 6,
+                padding: "4px 10px", fontSize: 12, cursor: "pointer",
+              }}
+            >
+              {toolsOpen ? "Werkzeuge »" : "« Werkzeuge"}
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              title={fsActive ? "Vollbild verlassen" : "Vollbild"}
+              style={{
+                background: "rgba(0,0,0,0.55)", color: "#fff",
+                border: "1px solid rgba(255,255,255,0.25)", borderRadius: 6,
+                padding: "4px 10px", fontSize: 12, cursor: "pointer",
+              }}
+            >
+              {fsActive ? "Vollbild aus" : "Vollbild"}
+            </button>
+          </div>
           {/* Legende ΔZ-Einfärbung (nur im Abweichungs-Modus) */}
           {colorMode === "dz" && (
             <div
@@ -606,6 +667,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
         </div>
 
         {/* Werkzeuge */}
+        {toolsOpen && (
         <div className="grid" style={{ gap: 12 }}>
           <div className="panel">
             <label className="small">Ansicht</label>
@@ -703,6 +765,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Profil-Diagramm unter dem Viewer */}
