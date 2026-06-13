@@ -179,15 +179,31 @@ export function PerimeterEditor({
     </div>
   );
 
+  // Gestapelt (schmaler Anlege-Dialog): Karte oben, Bedienung darunter.
+  if (stacked) {
+    return (
+      <div className="grid" style={{ gap: 10 }}>
+        <PerimeterMap perimeter={perimeter} mode={mode} onPick={onPick} onDrawn={onDrawn} focus={focus} mapHeight={mapHeight ?? 300} />
+        {controls}
+      </div>
+    );
+  }
+
+  // Standard: Karte ueber die volle Breite, Bedienung als Overlay oben rechts.
   return (
-    <div
-      className="grid"
-      style={stacked
-        ? { gap: 10 }
-        : { gap: 12, gridTemplateColumns: "1fr 280px", alignItems: "start" }}
-    >
-      <PerimeterMap perimeter={perimeter} mode={mode} onPick={onPick} onDrawn={onDrawn} focus={focus} mapHeight={mapHeight} />
-      {controls}
+    <div style={{ position: "relative" }}>
+      <PerimeterMap perimeter={perimeter} mode={mode} onPick={onPick} onDrawn={onDrawn} focus={focus} mapHeight={mapHeight ?? 560} />
+      <div
+        style={{
+          position: "absolute", top: 10, right: 10, zIndex: 1100,
+          width: 300, maxWidth: "calc(100% - 20px)", maxHeight: "calc(100% - 20px)",
+          overflowY: "auto",
+          background: "rgba(255,255,255,0.96)", border: "1px solid var(--border)",
+          borderRadius: 10, padding: 10, boxShadow: "0 2px 12px rgba(0,0,0,0.18)",
+        }}
+      >
+        {controls}
+      </div>
     </div>
   );
 }
