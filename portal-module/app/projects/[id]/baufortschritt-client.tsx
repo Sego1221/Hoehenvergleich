@@ -290,9 +290,9 @@ export function BaufortschrittPanel({
             />
           </div>
       ) : sel ? (
-          <div className="grid" style={{ gap: 12, gridTemplateColumns: "1.4fr 1fr", alignItems: "start" }}>
-            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} perimeter={perimeter} offset={sel.offset} height={560} />
-            <div className="panel" style={{ padding: 0, maxHeight: 560, overflowY: "auto" }}>
+          <div className="grid" style={{ gap: 12 }}>
+            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} perimeter={perimeter} offset={sel.offset} height={520} />
+            <div className="panel" style={{ padding: 0, maxHeight: 420, overflowY: "auto" }}>
               <div className="spread" style={{ padding: "10px 12px" }}>
                 <strong className="small">Bauteile</strong>
                 <span className="small muted">Status korrigierbar</span>
