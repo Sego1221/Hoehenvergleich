@@ -361,25 +361,45 @@ def evaluate_scan(catalog: list[dict], transform: dict, cloud_path: str,
 
 
 def _georef_diag(elements: list[dict], transform: dict, xyz: np.ndarray) -> dict:
-    """Diagnose, wenn keine Orientierung trifft: Wolken-BBox (LV95) und die
-    Modell-Mitte (E/N) je Vorzeichen-Variante. Macht 'Vorzeichen/Werte' sichtbar."""
+    """Diagnose, wenn keine Variante trifft: Wolken-BBox (LV95) und die Modell-
+    Mitte (E/N) je der 4 Vorzeichen-Varianten. Macht 'Vorzeichen/Werte' sichtbar."""
     cmin = xyz[:, :2].min(0); cmax = xyz[:, :2].max(0)
-    flip = {**transform, "tE": -transform["tE"], "tN": -transform["tN"], "tH": -transform["tH"]}
     def center(t):
         c = np.vstack([to_lv95(e["V"], t).mean(0) for e in elements]).mean(0)
         return [round(float(c[0]), 2), round(float(c[1]), 2)]
+    variants = _transform_variants(transform)
     return {
         "cloud_bbox": [round(float(cmin[0]), 2), round(float(cmin[1]), 2),
                        round(float(cmax[0]), 2), round(float(cmax[1]), 2)],
-        "model_center_direct": center(transform),
-        "model_center_flipped": center(flip),
+        "model_center_direct": center(variants[0]),
+        "model_center_flipped": center(variants[2]),  # nur T gedreht (Alt-Verhalten)
+        "model_centers": [center(v) for v in variants],  # alle 4: [+T+a, +T-a, -T+a, -T-a]
     }
 
 
+def _transform_variants(transform: dict):
+    """Alle 4 Vorzeichen-Kombinationen (T-Vorzeichen x Winkel-Vorzeichen).
+    Noetig, weil die 'Eingaberichtung' im Portal T UND Winkel negiert, der
+    alte Auto-Flip aber nur T drehte. Bei grossem T verschiebt ein falsches
+    Winkel-Vorzeichen das Modell um hunderte km -> muss mitprobiert werden.
+    Reihenfolge: Eingabe unveraendert zuerst, damit 'flipped=False' bevorzugt."""
+    out = []
+    for sT in (1, -1):
+        for sa in (1, -1):
+            out.append({
+                **transform,
+                "tE": sT * transform["tE"], "tN": sT * transform["tN"], "tH": sT * transform["tH"],
+                "angle_deg": sa * float(transform.get("angle_deg", 0.0)),
+            })
+    return out
+
+
 def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
-    """Richtige Transform-Richtung waehlen: liegt eine Bauteil-Mitte in der Wolken-
-    BBox? Sonst Vorzeichen von T drehen (lokal->LV95 vs. LV95->lokal). Gibt
-    (transform_used, flipped|None) zurueck; None = keine Richtung trifft (Warnung)."""
+    """Richtige Georef-Variante waehlen: liegt eine Bauteil-Mitte in der Wolken-
+    BBox? Probiert alle 4 Vorzeichen-Kombinationen (T- und Winkel-Vorzeichen).
+    Gibt (transform_used, flipped|None) zurueck; flipped=False wenn die Eingabe
+    unveraendert passt, True wenn ein Vorzeichen gedreht werden musste, None
+    wenn keine Variante trifft (Warnung)."""
     cmin = xyz[:, :2].min(0); cmax = xyz[:, :2].max(0)
     def hits(t):
         for e in elements:
@@ -387,11 +407,10 @@ def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
             if cmin[0] - 50 <= c[0] <= cmax[0] + 50 and cmin[1] - 50 <= c[1] <= cmax[1] + 50:
                 return True
         return False
-    if hits(transform):
-        return transform, False
-    flip = {**transform, "tE": -transform["tE"], "tN": -transform["tN"], "tH": -transform["tH"]}
-    if hits(flip):
-        return flip, True
+    variants = _transform_variants(transform)
+    for i, t in enumerate(variants):
+        if hits(t):
+            return t, (i != 0)
     return transform, None
 
 
