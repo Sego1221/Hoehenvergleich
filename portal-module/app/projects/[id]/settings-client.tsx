@@ -56,8 +56,8 @@ export function ProjectSettings({
   return (
     <>
       <button onClick={() => setOpen(true)}>Bearbeiten</button>
-      <Dialog open={open} title="Projekt-Einstellungen" onClose={() => setOpen(false)}>
-        <div style={{ maxHeight: "78vh", overflowY: "auto", display: "grid", gap: 14, paddingRight: 4 }}>
+      <Dialog open={open} title="Projekt-Einstellungen" onClose={() => setOpen(false)} maxWidth={1100}>
+        <div style={{ maxHeight: "82vh", overflowY: "auto", display: "grid", gap: 14, paddingRight: 4 }}>
           {/* Angaben */}
           <div className="panel">
             <div className="spread" style={{ marginBottom: 8 }}>

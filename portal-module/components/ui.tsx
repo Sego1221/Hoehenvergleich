@@ -7,10 +7,13 @@ import { useEffect, useRef, useState, createContext, useContext, useCallback } f
 
 /* ---------- Dialog (ersetzt alert/confirm) ---------- */
 export function Dialog({
-  open, title, children, onClose, footer,
+  open, title, children, onClose, footer, maxWidth = 560,
 }: {
   open: boolean; title: string; children?: React.ReactNode;
   onClose: () => void; footer?: React.ReactNode;
+  // Maximale Breite des Dialogs (px). Default 560; grosse Formulare (z.B. mit
+  // Karte) koennen breiter sein.
+  maxWidth?: number;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -30,7 +33,7 @@ export function Dialog({
       <div
         onMouseDown={(e) => e.stopPropagation()}
         className="panel"
-        style={{ minWidth: 380, maxWidth: 560, width: "90%" }}
+        style={{ minWidth: 380, maxWidth, width: maxWidth > 700 ? "95%" : "90%" }}
       >
         <div className="spread" style={{ marginBottom: 10 }}>
           <strong>{title}</strong>
