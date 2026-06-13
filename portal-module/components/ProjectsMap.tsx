@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import "leaflet/dist/leaflet.css";
+import { dissolvePerimeter } from "@/lib/geom";
 
 export type ProjectPin = {
   id: string;
@@ -72,8 +73,9 @@ export default function ProjectsMap({
         const ll = enToLatLng(e, n);
         latlngs.push(ll);
         if (p.perimeter?.length) {
-          for (const poly of p.perimeter) {
-            L.polygon(poly.map(([E, N]) => enToLatLng(E, N)) as any, { color: "#ff8c1a", weight: 1.5, fillOpacity: 0.08 }).addTo(map);
+          for (const poly of dissolvePerimeter(p.perimeter)) {
+            const rings = poly.map((ring) => ring.map(([E, N]) => enToLatLng(E, N)));
+            L.polygon(rings as any, { color: "#ff8c1a", weight: 1.5, fillOpacity: 0.08 }).addTo(map);
           }
         }
         const marker = L.circleMarker(ll, { radius: 8, color: "#fff", weight: 2, fillColor: "#20683D", fillOpacity: 1 }).addTo(map);

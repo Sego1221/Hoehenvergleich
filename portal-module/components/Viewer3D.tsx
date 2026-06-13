@@ -24,6 +24,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useToast, Slider } from "@/components/ui";
 import { ProfileChart } from "@/components/ProfileChart";
 import { BP } from "@/lib/api";
+import { dissolvePerimeter } from "@/lib/geom";
 import type { DxfPolyline, Profile, Scene } from "@/lib/computeClient";
 
 type ViewMode = "3d" | "plan";
@@ -643,10 +644,12 @@ export function Viewer3D({
     const group = new THREE.Group();
     const mat = new THREE.LineBasicMaterial({ color: 0xff8c1a });
     const z = planZRef.current;
-    for (const poly of perimeterRef.current) {
-      const pts = poly.map(([E, N]) => new THREE.Vector3(E - off[0], N - off[1], z));
-      const g = new THREE.BufferGeometry().setFromPoints(pts);
-      group.add(new THREE.LineLoop(g, mat));
+    // Angrenzende Parzellen verschmelzen -> nur Aussenkanten (+ evtl. Loecher).
+    for (const poly of dissolvePerimeter(perimeterRef.current)) {
+      for (const ring of poly) {
+        const pts = ring.map(([E, N]) => new THREE.Vector3(E - off[0], N - off[1], z));
+        group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat));
+      }
     }
     perimObjRef.current = group;
     scene.add(group);

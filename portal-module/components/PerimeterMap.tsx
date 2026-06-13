@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
+import { dissolvePerimeter } from "@/lib/geom";
 
 export type PMapMode = "view" | "parcel" | "draw";
 
@@ -119,8 +120,10 @@ export default function PerimeterMap(props: Props) {
     const layer = layerRef.current;
     if (!L || !layer || !mapRef.current) return;
     layer.clearLayers();
-    for (const poly of perimRef.current) {
-      L.polygon(poly.map(([e, n]) => enToLatLng(e, n)) as any, { color: "#ff8c1a", weight: 2, fillOpacity: 0.12 }).addTo(layer);
+    // Angrenzende Parzellen verschmelzen -> keine Innenkanten.
+    for (const poly of dissolvePerimeter(perimRef.current)) {
+      const rings = poly.map((ring) => ring.map(([e, n]) => enToLatLng(e, n)));
+      L.polygon(rings as any, { color: "#ff8c1a", weight: 2, fillOpacity: 0.12 }).addTo(layer);
     }
     const d = draftRef.current;
     if (d.length) {

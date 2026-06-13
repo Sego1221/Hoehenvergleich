@@ -21,6 +21,7 @@
     "lucide-react": "0.451.0",
     "next": "14.2.35",
     "pdf-lib": "1.17.1",
+    "polygon-clipping": "^0.15.7",
     "postgres": "3.4.4",
     "proj4": "2.11.0",
     "proj4leaflet": "1.0.2",
