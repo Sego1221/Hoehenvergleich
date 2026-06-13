@@ -44,9 +44,35 @@ export async function compare(
   return req<CompareResult>("/compare", { method: "POST", body: fd });
 }
 
-/** Kennzahlen für neue Toleranz (Slider, ohne Neuberechnung). */
-export function statsForTol(jobId: string, tol: number): Promise<Stats> {
+/** Bauperimeter = Liste von Polygonen [[ [E,N],... ],...] (LV95). */
+export type Perimeter = [number, number][][];
+
+/** Kennzahlen für neue Toleranz (Slider, ohne Neuberechnung).
+ *  Mit perimeter: nur innerhalb des Bauperimeters (Cut/Fill/% auf Soll). */
+export function statsForTol(jobId: string, tol: number, perimeter?: Perimeter | null): Promise<Stats> {
+  if (perimeter && perimeter.length) {
+    return req<Stats>(`/jobs/${jobId}/stats`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tol, perimeter }),
+    });
+  }
   return req<Stats>(`/jobs/${jobId}/stats?tol=${tol}`);
+}
+
+/** ΔZ-Karte (tif/png) vom Compute holen — optional auf den Bauperimeter geclippt.
+ *  Liefert die rohe Response, damit die Proxy-Route den Body streamen kann. */
+export function fetchDz(
+  jobId: string, fmt: "tif" | "png", tol: number, perimeter?: Perimeter | null,
+): Promise<Response> {
+  const hasP = !!(perimeter && perimeter.length);
+  const path = fmt === "png" ? "dz.png" : "dz.tif";
+  if (hasP) {
+    return fetch(`${BASE}/jobs/${jobId}/${path}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(fmt === "png" ? { tol, perimeter } : { perimeter }),
+    });
+  }
+  return fetch(fmt === "png" ? previewPngUrl(jobId, tol) : geotiffUrl(jobId));
 }
 
 /** Schnitt-Profil entlang Polylinie [[E,N],...] (LV95). */

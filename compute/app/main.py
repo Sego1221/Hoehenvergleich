@@ -161,6 +161,16 @@ def job_stats(job_id: str, tol: float = 0.05):
     return engine.stats(_get(job_id), tol)
 
 
+@app.post("/jobs/{job_id}/stats")
+def job_stats_perim(job_id: str, payload: dict | None = None):
+    """Wie GET /stats, aber optional auf den Bauperimeter beschränkt.
+
+    payload: {tol?: float, perimeter?: [[ [E,N],... ],...]}.
+    """
+    p = payload or {}
+    return engine.stats(_get(job_id), float(p.get("tol", 0.05)), polygons=p.get("perimeter"))
+
+
 @app.post("/jobs/{job_id}/profile")
 def job_profile(job_id: str, payload: dict):
     """Schnitt entlang Polylinie [[E,N],...] in LV95 -> Soll/Ist/dZ-Profil."""
@@ -194,19 +204,52 @@ def job_protocol(job_id: str, ctx: dict | None = None):
                              headers={"Content-Disposition": f'attachment; filename="protokoll_{job_id}.pdf"'})
 
 
-@app.get("/jobs/{job_id}/dz.tif")
-def job_geotiff(job_id: str):
-    """ΔZ als georeferenziertes GeoTIFF (EPSG:2056)."""
+def _dz_display(r: engine.Result, polygons=None) -> np.ndarray:
+    """ΔZ-Anzeigeraster: ungültige Zellen UND (optional) ausserhalb des Perimeters -> NaN."""
+    valid = engine.valid_mask(r, polygons)
+    return np.where(valid, r.dz, np.nan)
+
+
+def _render_dz_tif(r: engine.Result, polygons=None) -> io.BytesIO:
     import rasterio
     from rasterio.transform import from_origin
-    r = _get(job_id); g = r.grid
-    arr = np.flipud(np.where(r.valid, r.dz, np.nan)).astype(np.float32)
+    g = r.grid
+    arr = np.flipud(_dz_display(r, polygons)).astype(np.float32)
     buf = io.BytesIO()
     with rasterio.open(buf, "w", driver="GTiff", height=g.ny, width=g.nx, count=1,
                        dtype="float32", crs="EPSG:2056",
                        transform=from_origin(g.x0, g.y1, g.res, g.res), nodata=np.nan) as dst:
         dst.write(arr, 1)
     buf.seek(0)
+    return buf
+
+
+def _render_dz_png(r: engine.Result, clip=0.30, polygons=None) -> io.BytesIO:
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    g = r.grid
+    fig, ax = plt.subplots(figsize=(7, 7))
+    im = ax.imshow(_dz_display(r, polygons), origin="lower", extent=g.extent,
+                   cmap="RdYlBu_r", vmin=-clip, vmax=clip, aspect="equal")
+    ax.set_xlabel("E (LV95)"); ax.set_ylabel("N (LV95)")
+    plt.colorbar(im, ax=ax, shrink=0.8, label="ΔZ [m]")
+    buf = io.BytesIO(); plt.tight_layout(); plt.savefig(buf, format="png", dpi=110); plt.close()
+    buf.seek(0)
+    return buf
+
+
+@app.get("/jobs/{job_id}/dz.tif")
+def job_geotiff(job_id: str):
+    """ΔZ als georeferenziertes GeoTIFF (EPSG:2056)."""
+    buf = _render_dz_tif(_get(job_id))
+    return StreamingResponse(buf, media_type="image/tiff",
+                             headers={"Content-Disposition": f'attachment; filename="dz_{job_id}.tif"'})
+
+
+@app.post("/jobs/{job_id}/dz.tif")
+def job_geotiff_perim(job_id: str, payload: dict | None = None):
+    """Wie GET /dz.tif, aber optional auf den Bauperimeter beschränkt (payload.perimeter)."""
+    buf = _render_dz_tif(_get(job_id), (payload or {}).get("perimeter"))
     return StreamingResponse(buf, media_type="image/tiff",
                              headers={"Content-Disposition": f'attachment; filename="dz_{job_id}.tif"'})
 
@@ -214,16 +257,14 @@ def job_geotiff(job_id: str):
 @app.get("/jobs/{job_id}/dz.png")
 def job_png(job_id: str, tol: float = 0.05, clip: float = 0.30):
     """ΔZ-Heatmap als PNG (für schnelle Vorschau)."""
-    import matplotlib; matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    r = _get(job_id); g = r.grid
-    fig, ax = plt.subplots(figsize=(7, 7))
-    im = ax.imshow(np.where(r.valid, r.dz, np.nan), origin="lower", extent=g.extent,
-                   cmap="RdYlBu_r", vmin=-clip, vmax=clip, aspect="equal")
-    ax.set_xlabel("E (LV95)"); ax.set_ylabel("N (LV95)")
-    plt.colorbar(im, ax=ax, shrink=0.8, label="ΔZ [m]")
-    buf = io.BytesIO(); plt.tight_layout(); plt.savefig(buf, format="png", dpi=110); plt.close()
-    buf.seek(0)
+    return StreamingResponse(_render_dz_png(_get(job_id), clip), media_type="image/png")
+
+
+@app.post("/jobs/{job_id}/dz.png")
+def job_png_perim(job_id: str, payload: dict | None = None):
+    """Wie GET /dz.png, aber optional auf den Bauperimeter beschränkt (payload.perimeter)."""
+    p = payload or {}
+    buf = _render_dz_png(_get(job_id), float(p.get("clip", 0.30)), p.get("perimeter"))
     return StreamingResponse(buf, media_type="image/png")
 
 

@@ -206,6 +206,9 @@ export function CompareView({
           </div>
         </div>
 
+        {initialPerimeter && initialPerimeter.length > 0 && (
+          <div className="small muted">Kennzahlen + Karte beziehen sich auf den Bauperimeter.</div>
+        )}
         <div className="grid cols-2">
           <div className="kpi cut"><div className="l">Abtrag (Cut)</div><div className="v">{m3(live?.cut_m3 ?? stats?.cut_m3)}</div></div>
           <div className="kpi fill"><div className="l">Auftrag (Fill)</div><div className="v">{m3(live?.fill_m3 ?? stats?.fill_m3)}</div></div>

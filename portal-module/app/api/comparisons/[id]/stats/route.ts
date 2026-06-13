@@ -6,11 +6,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { statsForTol } from "@/lib/computeClient";
+import { perimeterForComparison } from "@/lib/perimeter";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const tol = Number(req.nextUrl.searchParams.get("tol") ?? "0.05");
+  // Perimeter standardmaessig anwenden; ?full=1 erzwingt das ganze Modell.
+  const full = req.nextUrl.searchParams.get("full") === "1";
   const [c] = await db
     .select({ jobId: schema.comparisons.computeJobId })
     .from(schema.comparisons)
@@ -19,7 +22,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Kein Compute-Job vorhanden." }, { status: 404 });
   }
   try {
-    const stats = await statsForTol(c.jobId, tol);
+    const perimeter = full ? null : await perimeterForComparison(params.id);
+    const stats = await statsForTol(c.jobId, tol, perimeter);
     return NextResponse.json(stats);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });

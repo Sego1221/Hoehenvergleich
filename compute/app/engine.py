@@ -206,15 +206,49 @@ def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
     return Result(grid, soll, ist, dz, valid, meta)
 
 
-def stats(result: Result, tol=0.05) -> dict:
-    """Kennzahlen für gegebene Toleranz (günstig, da nur Schwellen)."""
-    d = result.dz[result.valid]
+def mask_from_polygons(grid: Grid, polygons) -> np.ndarray:
+    """Bool-Maske (ny,nx): True, wo das Zellzentrum in IRGENDEINEM Polygon liegt.
+
+    polygons = Liste von Polygonen [[E,N],...] (LV95). Für den Bauperimeter (eine
+    Parzelle = ein Polygon; mehrere Parzellen additiv). Leere/zu kleine Polygone
+    werden übersprungen.
+    """
+    from matplotlib.path import Path
+    g = grid
+    ex = g.x0 + (np.arange(g.nx) + 0.5) * g.res
+    ny_ = g.y0 + (np.arange(g.ny) + 0.5) * g.res
+    EX, NY = np.meshgrid(ex, ny_)
+    pts = np.column_stack([EX.ravel(), NY.ravel()])
+    inside = np.zeros(g.ny * g.nx, dtype=bool)
+    for poly in (polygons or []):
+        arr = np.asarray(poly, dtype=float)
+        if arr.ndim != 2 or arr.shape[0] < 3:
+            continue
+        inside |= Path(arr).contains_points(pts)
+    return inside.reshape(g.ny, g.nx)
+
+
+def valid_mask(result: Result, polygons=None) -> np.ndarray:
+    """Gültige Vergleichszellen, optional auf den Bauperimeter (Polygon-Liste) beschränkt."""
+    if polygons:
+        return result.valid & mask_from_polygons(result.grid, polygons)
+    return result.valid
+
+
+def stats(result: Result, tol=0.05, polygons=None) -> dict:
+    """Kennzahlen für gegebene Toleranz (günstig, da nur Schwellen).
+
+    polygons (optional): Bauperimeter [[ [E,N],... ],...] — schränkt alle
+    Kennzahlen (Fläche, Cut/Fill, % auf Soll) auf den Perimeter ein.
+    """
+    valid = valid_mask(result, polygons)
+    d = result.dz[valid]
     A = result.grid.res ** 2
     if d.size == 0:
         return {"cells": 0}
     return {
-        "cells": int(result.valid.sum()),
-        "area_m2": float(result.valid.sum() * A),
+        "cells": int(valid.sum()),
+        "area_m2": float(valid.sum() * A),
         "cut_m3": float(np.clip(d, 0, None).sum() * A),
         "fill_m3": float(np.clip(-d, 0, None).sum() * A),
         "net_m3": float(d.sum() * A),
