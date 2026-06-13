@@ -17,6 +17,12 @@ export default async function BaufortschrittPage({ params }: { params: { id: str
     .orderBy(desc(schema.projectTransforms.createdAt))
     .limit(1);
 
+  const [project] = await db
+    .select({ perimeter: schema.projects.perimeter })
+    .from(schema.projects)
+    .where(eq(schema.projects.id, params.id))
+    .limit(1);
+
   const [bfModelRow] = await db
     .select()
     .from(schema.bfModel)
@@ -34,6 +40,7 @@ export default async function BaufortschrittPage({ params }: { params: { id: str
     <BaufortschrittPanel
       projectId={params.id}
       hasTransform={!!transform}
+      perimeter={(project?.perimeter as [number, number][][] | null) ?? null}
       initialModel={bfModelRow ? {
         id: bfModelRow.id,
         computeModelId: bfModelRow.computeModelId,
@@ -42,6 +49,7 @@ export default async function BaufortschrittPage({ params }: { params: { id: str
         ifcNames: bfModelRow.ifcNames as string[] | null,
         files: bfModelRow.files as { name: string; size: number; mtime?: number }[] | null,
         elements: bfModelRow.elements as { guid: string | null; name: string | null; betonage: string | null }[] | null,
+        offset: (bfModelRow.offset as [number, number, number] | null) ?? null,
       } : null}
       initialRuns={runs.map((r) => ({
         id: r.id,
@@ -52,6 +60,7 @@ export default async function BaufortschrittPage({ params }: { params: { id: str
         summary: r.summary as { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number; nicht_erfasst?: number } | null,
         elements: r.elements as BauteilRow[] | null,
         overrides: r.overrides as Record<string, string> | null,
+        offset: (r.offset as [number, number, number] | null) ?? null,
       }))}
     />
   );

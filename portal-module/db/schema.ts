@@ -98,6 +98,7 @@ export const bfModel = hv.table("bf_model", {
   ifcNames: jsonb("ifc_names"),    // string[] der hochgeladenen Etappen (Anzeige)
   files: jsonb("files"),           // [{ name, size, uploadedAt }] aktive Etappen-Dateien
   ifcColors: jsonb("ifc_colors"),  // { guid: [r,g,b] } Standardfarben aus IFC
+  offset: jsonb("offset"),         // [E,N,H] LV95-Offset des Vorschau-GLB (fuer Perimeter-Overlay)
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ byProject: index("bf_model_project_idx").on(t.projectId) }));
 
@@ -117,6 +118,7 @@ export const bfRuns = hv.table("bf_runs", {
   summary: jsonb("summary"),       // { n_elements, gebaut, nicht_gebaut, verdeckt }
   elements: jsonb("elements"),     // [{ guid, betonage, kote_ok, status, frac_*, dz_mean, ... }]
   overrides: jsonb("overrides"),   // manuelle Korrekturen { guid: status } (effektiv = override ?? auto)
+  offset: jsonb("offset"),         // [E,N,H] LV95-Offset des Status-GLB (fuer Perimeter-Overlay)
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ byProject: index("bf_runs_project_idx").on(t.projectId) }));

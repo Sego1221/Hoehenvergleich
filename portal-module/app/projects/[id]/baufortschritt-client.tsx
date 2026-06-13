@@ -19,12 +19,14 @@ type Model = {
   betonagen: string[] | null; ifcNames: string[] | null;
   files: { name: string; size: number; mtime?: number }[] | null;
   elements: { guid: string | null; name: string | null; betonage: string | null }[] | null;
+  offset: [number, number, number] | null;
 };
 type Run = {
   id: string; name: string; scanName: string | null; surveyDate: string | null; createdAt: string;
   summary: { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number; nicht_erfasst?: number } | null;
   elements: BauteilRow[] | null;
   overrides: Record<string, string> | null;
+  offset: [number, number, number] | null;
 };
 type StatusKey = "gebaut" | "nicht_gebaut" | "verdeckt" | "nicht_erfasst";
 
@@ -36,9 +38,10 @@ const COLOR: Record<string, string> = { gebaut: "#28b450", nicht_gebaut: "#96969
 const dkey = (r: Run) => r.surveyDate ?? r.createdAt;
 
 export function BaufortschrittPanel({
-  projectId, hasTransform, initialModel, initialRuns,
+  projectId, hasTransform, perimeter, initialModel, initialRuns,
 }: {
-  projectId: string; hasTransform: boolean; initialModel: Model | null; initialRuns: Run[];
+  projectId: string; hasTransform: boolean; perimeter: [number, number][][] | null;
+  initialModel: Model | null; initialRuns: Run[];
 }) {
   const toast = useToast();
   const [model, setModel] = useState<Model | null>(initialModel);
@@ -220,6 +223,8 @@ export function BaufortschrittPanel({
               guids={(model.elements ?? []).map((e) => e.guid)}
               defaultMode="material"
               height={420}
+              perimeter={perimeter}
+              offset={model.offset}
             />
           </div>
         )}
@@ -270,7 +275,7 @@ export function BaufortschrittPanel({
             </a>
           </div>
           <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 1fr", alignItems: "start" }}>
-            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} />
+            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} perimeter={perimeter} offset={sel.offset} />
             <div className="panel" style={{ padding: 0, maxHeight: 480, overflowY: "auto" }}>
               <div className="spread" style={{ padding: "10px 12px" }}>
                 <strong className="small">Bauteile</strong>

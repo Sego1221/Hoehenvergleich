@@ -71,6 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ifcNames: ifcNames as unknown as Record<string, unknown>,
     files: (result.files ?? []) as unknown as Record<string, unknown>,
     ifcColors: ifcColors as unknown as Record<string, unknown>,
+    offset: (result.offset ?? null) as unknown as Record<string, unknown>,
     updatedAt: new Date(),
   };
   let row;

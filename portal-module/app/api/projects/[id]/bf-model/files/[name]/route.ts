@@ -29,6 +29,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     ifcNames: ifcNames as unknown as Record<string, unknown>,
     files: (res.files ?? []) as unknown as Record<string, unknown>,
     ifcColors: ifcColors as unknown as Record<string, unknown>,
+    offset: (res.offset ?? null) as unknown as Record<string, unknown>,
     updatedAt: new Date(),
   }).where(eq(schema.bfModel.id, m.id)).returning();
   return NextResponse.json(row);

@@ -214,7 +214,10 @@ def save_model(mdir: str, catalog: list[dict], transform: dict) -> dict:
     with open(_os.path.join(mdir, "catalog.json"), "w", encoding="utf-8") as fh:
         _json.dump({"elements": attrs}, fh, ensure_ascii=False, default=str)
     betonagen = sorted({str(e.get("betonage")) for e in catalog if e.get("betonage")})
-    return {"n_elements": len(catalog), "betonagen": betonagen, "elements": attrs}
+    # LV95-Offset (wie im Vorschau-GLB) fuer Perimeter-Overlay im Viewer.
+    allV = np.vstack([to_lv95(e["V"], transform) for e in catalog])
+    offset = np.floor(allV.min(axis=0)).tolist()
+    return {"n_elements": len(catalog), "betonagen": betonagen, "elements": attrs, "offset": offset}
 
 
 def load_model(mdir: str):

@@ -75,6 +75,10 @@ export async function register() {
       ADD COLUMN IF NOT EXISTS "files" jsonb`);
     await sql.unsafe(`ALTER TABLE "hoehenvergleich"."bf_model"
       ADD COLUMN IF NOT EXISTS "ifc_colors" jsonb`);
+    await sql.unsafe(`ALTER TABLE "hoehenvergleich"."bf_model"
+      ADD COLUMN IF NOT EXISTS "offset" jsonb`);
+    await sql.unsafe(`ALTER TABLE "hoehenvergleich"."bf_runs"
+      ADD COLUMN IF NOT EXISTS "offset" jsonb`);
     console.log("[hoehenvergleich] instrumentation: additive DDL ok.");
   } catch (e) {
     console.error("[hoehenvergleich] instrumentation: DDL fehlgeschlagen:", e);

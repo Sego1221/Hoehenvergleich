@@ -67,6 +67,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       computeJobId: result.job_id,
       summary: result.summary as unknown as Record<string, unknown>,
       elements: result.elements as unknown as Record<string, unknown>,
+      offset: (result.offset ?? null) as unknown as Record<string, unknown>,
     })
     .returning();
   return NextResponse.json(row, { status: 201 });

@@ -93,6 +93,7 @@ export type BauteilResult = {
   transform_flipped: boolean | null;
   transform_warning: boolean;
   meshUrl?: string;
+  offset?: [number, number, number];
 };
 
 /** Struktur-IFC + Scan -> Status je Bauteil. transform: Strukturmodell-Georef. */
@@ -122,6 +123,7 @@ export type BfModelResult = {
     betonage: string | null; material: string | null; kote_ok: string | null; kote_uk: string | null;
     color?: [number, number, number] | null }[];
   files?: BfModelFile[];
+  offset?: [number, number, number];
 };
 
 /** Liste der Etappen-Dateien eines Modells. */

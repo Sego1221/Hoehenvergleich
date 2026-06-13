@@ -35,6 +35,7 @@ export async function POST(_req: NextRequest, { params }: { params: { runId: str
   const [row] = await db.update(schema.bfRuns).set({
     summary: result.summary as unknown as Record<string, unknown>,
     elements: result.elements as unknown as Record<string, unknown>,
+    offset: (result.offset ?? null) as unknown as Record<string, unknown>,
   }).where(eq(schema.bfRuns.id, params.runId)).returning();
   return NextResponse.json(row);
 }

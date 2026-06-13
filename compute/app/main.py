@@ -289,6 +289,7 @@ async def bauteil_scan(
     result["job_id"] = jid
     if result.get("scene"):
         result["meshUrl"] = f"/jobs/{jid}/status.glb"
+        result["offset"] = result["scene"]["offset"]
     return result
 
 
@@ -322,6 +323,7 @@ async def bauteil_rescan(model_id: str, job_id: str, transform: str = Form(""),
     result["job_id"] = job_id
     if result.get("scene"):
         result["meshUrl"] = f"/jobs/{job_id}/status.glb"
+        result["offset"] = result["scene"]["offset"]
     return result
 
 

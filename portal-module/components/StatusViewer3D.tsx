@@ -19,23 +19,32 @@ const STATUSES = [
 const HEX: Record<string, string> = { gebaut: "#28b450", nicht_gebaut: "#969696", verdeckt: "#f0962a", nicht_erfasst: "#5a5a6e" };
 
 export default function StatusViewer3D({
-  url, statusByGuid, guids, height = 480, defaultMode = "status",
+  url, statusByGuid, guids, height = 480, defaultMode = "status", perimeter = null, offset = null,
 }: {
   url: string; statusByGuid: Record<string, string>; guids: (string | null)[];
   height?: number; defaultMode?: "status" | "material";
+  perimeter?: [number, number][][] | null; offset?: [number, number, number] | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const meshesRef = useRef<{ guid: string; mesh: THREE.Mesh; orig: THREE.Material }[]>([]);
   const matsRef = useRef<Record<string, THREE.Material>>({});
   const mapRef = useRef(statusByGuid);
   const guidsRef = useRef(guids);
+  const perimRef = useRef(perimeter);
+  const offsetRef = useRef(offset);
+  const perimGroupRef = useRef<THREE.Group | null>(null);
   const visRef = useRef<Record<string, boolean>>({ gebaut: true, nicht_gebaut: true, verdeckt: true, nicht_erfasst: true });
   const modeRef = useRef<"status" | "material">(defaultMode);
+  const showPerimRef = useRef(true);
   const [status, setStatus] = useState("Lade Modell …");
   const [vis, setVis] = useState<Record<string, boolean>>(visRef.current);
   const [mode, setMode] = useState<"status" | "material">(defaultMode);
+  const [showPerim, setShowPerim] = useState(true);
   mapRef.current = statusByGuid;
   guidsRef.current = guids;
+  perimRef.current = perimeter;
+  offsetRef.current = offset;
+  const hasPerim = !!(perimeter && perimeter.length && offset);
 
   const present = useMemo(() => {
     const set = new Set(Object.values(statusByGuid));
@@ -103,6 +112,25 @@ export default function StatusViewer3D({
       }));
       meshesRef.current = list; applyColorsVis();
       const box = new THREE.Box3().setFromObject(root);
+
+      // Bauperimeter (LV95-Polygone) zur Kontrolle einblenden. Das GLB ist um
+      // 'offset' (LV95-Minimum) nach lokal verschoben; der Perimeter muss gleich
+      // verschoben werden. Z = Modell-Unterkante.
+      const off = offsetRef.current; const perim = perimRef.current;
+      if (off && perim?.length) {
+        const grp = new THREE.Group();
+        const z = box.min.z;
+        const mat = new THREE.LineBasicMaterial({ color: 0xe000a0 });
+        for (const ring of perim) {
+          if (!ring?.length) continue;
+          const pts = ring.map(([E, N]) => new THREE.Vector3(E - off[0], N - off[1], z));
+          grp.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat));
+        }
+        grp.visible = showPerimRef.current;
+        scene.add(grp); perimGroupRef.current = grp;
+        box.expandByObject(grp);
+      }
+
       const c = box.getCenter(new THREE.Vector3()); const r = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 1);
       controls.target.copy(c);
       cam.position.set(c.x - r * 1.4, c.y - r * 1.4, c.z + r * 1.2);
@@ -136,6 +164,10 @@ export default function StatusViewer3D({
           className={mode === "status" ? "primary" : ""} style={{ padding: "3px 10px" }}>Status</button>
         <button onClick={() => { modeRef.current = "material"; setMode("material"); applyColorsVis(); }}
           className={mode === "material" ? "primary" : ""} style={{ padding: "3px 10px" }}>Material</button>
+        {hasPerim && (
+          <button onClick={() => { const n = !showPerimRef.current; showPerimRef.current = n; setShowPerim(n); if (perimGroupRef.current) perimGroupRef.current.visible = n; }}
+            className={showPerim ? "primary" : ""} style={{ padding: "3px 10px" }} title="Bauperimeter zur Kontrolle ein-/ausblenden">Perimeter</button>
+        )}
       </div>
       <div style={{ position: "absolute", top: 10, left: 10, zIndex: 5, display: "grid", gap: 4 }}>
         {present.map((s) => (
