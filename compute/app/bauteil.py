@@ -254,24 +254,10 @@ def evaluate_scan(catalog: list[dict], transform: dict, cloud_path: str,
         summ[st] = sum(r["status"] == st for r in rows)
     scene = None
     if out_glb:
-        by = {r["guid"]: r for r in rows}
-        scene = _glb_from_geom(Vs, [e["F"] for e in catalog], [e["guid"] for e in catalog], by, out_glb)
+        statuses = [r["status"] for r in rows]
+        scene = _status_glb(Vs, [e["F"] for e in catalog], statuses, out_glb)
     return {"summary": summ, "elements": rows, "transform_flipped": flipped,
             "transform_warning": (flipped is None), "scene": scene}
-
-
-def _glb_from_geom(Vs, Fs, guids, by_guid, out_glb) -> dict:
-    import trimesh
-    allV = np.vstack(Vs); offset = np.floor(allV.min(axis=0))
-    scene = trimesh.Scene()
-    for V, F, g in zip(Vs, Fs, guids):
-        col = STATUS_COLOR.get(by_guid.get(g, {}).get("status", "nicht_erfasst"), (150, 150, 150))
-        m = trimesh.Trimesh(vertices=(V - offset).astype(np.float32), faces=F, process=False)
-        m.visual.vertex_colors = np.tile(np.array([*col, 255], np.uint8), (len(m.vertices), 1))
-        scene.add_geometry(m)
-    scene.export(out_glb, file_type="glb")
-    return {"offset": offset.tolist(), "bbox_min": allV.min(axis=0).tolist(),
-            "bbox_max": allV.max(axis=0).tolist(), "bytes": int(os.path.getsize(out_glb))}
 
 
 def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
@@ -293,24 +279,34 @@ def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
     return transform, None
 
 
-def export_status_glb(elements: list[dict], rows: list[dict], transform: dict, out_glb: str) -> dict:
-    """Struktur-Bauteile als GLB, je Bauteil nach Status eingefaerbt, um gemeinsamen
-    Offset verschoben (float32-tauglich). Rueckgabe: offset/bbox fuer scene.json."""
+def _status_glb(Vs: list, Fs: list, statuses: list, out_glb: str) -> dict:
+    """GLB mit dem GANZEN Modell, je Status zu EINER benannten Gruppe zusammengefasst
+    (gebaut/nicht_gebaut/verdeckt/nicht_erfasst) — der Viewer kann pro Gruppe ein-/
+    ausblenden. Geometrie LV95, um gemeinsamen Offset verschoben (float32)."""
     import trimesh
-    by_guid = {r["guid"]: r for r in rows}
-    Vs = [to_lv95(e["V"], transform) for e in elements]
-    allV = np.vstack(Vs)
-    offset = np.floor(allV.min(axis=0))
+    allV = np.vstack(Vs); offset = np.floor(allV.min(axis=0))
+    groups: dict[str, list] = {}
+    for V, F, st in zip(Vs, Fs, statuses):
+        groups.setdefault(st or "nicht_erfasst", []).append((V - offset, F))
     scene = trimesh.Scene()
-    for e, V in zip(elements, Vs):
-        col = STATUS_COLOR.get(by_guid.get(e["guid"], {}).get("status", "nicht_gebaut"), (150, 150, 150))
-        m = trimesh.Trimesh(vertices=(V - offset).astype(np.float32), faces=e["F"], process=False)
-        m.visual.vertex_colors = np.tile(np.array([*col, 255], np.uint8), (len(m.vertices), 1))
-        scene.add_geometry(m)
+    for st, items in groups.items():
+        meshes = [trimesh.Trimesh(vertices=v.astype(np.float32), faces=f, process=False) for v, f in items]
+        merged = trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
+        col = STATUS_COLOR.get(st, (150, 150, 150))
+        merged.visual.vertex_colors = np.tile(np.array([*col, 255], np.uint8), (len(merged.vertices), 1))
+        scene.add_geometry(merged, geom_name=st, node_name=st)
     scene.export(out_glb, file_type="glb")
     return {"offset": offset.tolist(),
             "bbox_min": allV.min(axis=0).tolist(), "bbox_max": allV.max(axis=0).tolist(),
             "bytes": int(os.path.getsize(out_glb))}
+
+
+def export_status_glb(elements: list[dict], rows: list[dict], transform: dict, out_glb: str) -> dict:
+    """Bauteile als GLB, nach Status gruppiert (siehe _status_glb)."""
+    by_guid = {r["guid"]: r for r in rows}
+    Vs = [to_lv95(e["V"], transform) for e in elements]
+    statuses = [by_guid.get(e["guid"], {}).get("status", "nicht_gebaut") for e in elements]
+    return _status_glb(Vs, [e["F"] for e in elements], statuses, out_glb)
 
 
 def evaluate(ifc_path: str, cloud_path: str, transform: dict, res=0.10, tol=0.05,
