@@ -27,8 +27,11 @@ export default async function ComparisonPage({ params }: { params: { id: string 
       </div>
       <CompareView
         comparisonId={params.id}
+        projectId={comparison.projectId}
         projectName={project?.name ?? ""}
         comparisonName={comparison.name}
+        initialPerimeter={(project?.perimeter as [number, number][][] | null) ?? null}
+        initialParcels={(project?.perimeterParcels as { egrid: string | null; number: string | null; ak: string | null }[] | null) ?? null}
         stats={comparison.stats as Record<string, number> | null}
         params={comparison.params as Record<string, number> | null}
         initialSections={sections.map((s) => ({ id: s.id, name: s.name, kind: s.kind, line: s.line as [number, number][] }))}

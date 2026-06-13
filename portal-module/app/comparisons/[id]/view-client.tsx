@@ -26,12 +26,14 @@ type Section = { id: string; name: string; kind: string | null; line: [number, n
 type Region = { id: string; name: string; polygon: [number, number][]; volumes: Record<string, number> | null };
 
 export function CompareView({
-  comparisonId, projectName, comparisonName, stats, params,
-  initialSections, initialRegions,
+  comparisonId, projectId, projectName, comparisonName, stats, params,
+  initialSections, initialRegions, initialPerimeter, initialParcels,
 }: {
-  comparisonId: string; projectName: string; comparisonName: string;
+  comparisonId: string; projectId: string; projectName: string; comparisonName: string;
   stats: Record<string, number> | null; params: Record<string, number> | null;
   initialSections: Section[]; initialRegions: Region[];
+  initialPerimeter: [number, number][][] | null;
+  initialParcels: { egrid: string | null; number: string | null; ak: string | null }[] | null;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -148,7 +150,13 @@ export function CompareView({
       </div>
 
       {tab === "3d" ? (
-        <Viewer3D comparisonId={comparisonId} tol={tol} />
+        <Viewer3D
+          comparisonId={comparisonId}
+          projectId={projectId}
+          tol={tol}
+          initialPerimeter={initialPerimeter}
+          initialParcels={initialParcels}
+        />
       ) : (
         Map2D()
       )}

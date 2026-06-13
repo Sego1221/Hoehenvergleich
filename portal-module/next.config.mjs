@@ -13,6 +13,8 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   // Beta: Typfehler sollen den Build nicht blockieren (lokal kein Build testbar).
   typescript: { ignoreBuildErrors: true },
+  // instrumentation.ts (additive DDL beim Start) — in Next 14.2 noch experimentell.
+  experimental: { instrumentationHook: true },
 };
 
 export default nextConfig;

@@ -28,6 +28,28 @@ import type { Profile, Scene } from "@/lib/computeClient";
 
 type ViewMode = "3d" | "plan";
 type ColorMode = "dz" | "rgb";
+type PerimeterMode = "off" | "draw" | "parcel";
+type CloudFilter = "all" | "inside" | "outside";
+type Parcel = { egrid: string | null; number: string | null; ak: string | null };
+
+// Punkt-in-Polygon (Ray-Casting) gegen eine Liste von Polygonen (flach gespeichert).
+// "innen" = in irgendeinem Polygon. polys: Array von Float64Array [x0,y0,x1,y1,...].
+function pointInPolys(x: number, y: number, polys: Float64Array[], bboxes: Float64Array): boolean {
+  for (let p = 0; p < polys.length; p++) {
+    const bx = p * 4;
+    if (x < bboxes[bx] || x > bboxes[bx + 2] || y < bboxes[bx + 1] || y > bboxes[bx + 3]) continue;
+    const poly = polys[p];
+    let inside = false;
+    const n = poly.length / 2;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = poly[i * 2], yi = poly[i * 2 + 1];
+      const xj = poly[j * 2], yj = poly[j * 2 + 1];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
 
 type RGB = [number, number, number];
 type Stops = ReadonlyArray<RGB>;
@@ -86,7 +108,13 @@ function computeCloudColors(
   return col;
 }
 
-export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; tol?: number }) {
+export function Viewer3D({
+  comparisonId, projectId, tol = 0.05, initialPerimeter = null, initialParcels = null,
+}: {
+  comparisonId: string; projectId: string; tol?: number;
+  initialPerimeter?: [number, number][][] | null;
+  initialParcels?: Parcel[] | null;
+}) {
   const toast = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -125,14 +153,35 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   const [toolsOpen, setToolsOpen] = useState(true);   // Werkzeug-Spalte ein/aus
   const [fsActive, setFsActive] = useState(false);    // Vollbild
   const stageRef = useRef<HTMLDivElement>(null);
+
+  // Bauperimeter (LV95-Polygone) + amtliche Parzellen-Metadaten.
+  const [perimeter, setPerimeter] = useState<[number, number][][]>(initialPerimeter ?? []);
+  const [parcels, setParcels] = useState<Parcel[]>(
+    initialParcels ?? (initialPerimeter ?? []).map(() => ({ egrid: null, number: null, ak: null })),
+  );
+  const [perimeterMode, setPerimeterMode] = useState<PerimeterMode>("off");
+  const [cloudFilter, setCloudFilter] = useState<CloudFilter>("all");
+  const [perimeterDirty, setPerimeterDirty] = useState(false);
+  const [savingPerimeter, setSavingPerimeter] = useState(false);
+  const [drawCount, setDrawCount] = useState(0);     // Punkte im laufenden Zeichnen
+  const perimeterRef = useRef<[number, number][][]>(initialPerimeter ?? []);
+  const perimeterModeRef = useRef<PerimeterMode>("off");
+  const cloudFilterRef = useRef<CloudFilter>("all");
+  const perimObjRef = useRef<THREE.Group | null>(null);    // gerenderte Perimeter-Linien
+  const drawTmpRef = useRef<THREE.Object3D[]>([]);          // Marker/Vorschau beim Zeichnen
+  const drawPtsRef = useRef<THREE.Vector3[]>([]);           // laufende Zeichen-Punkte (lokal)
+
   const devRef = useRef<Float32Array | null>(null);  // ΔZ pro Punkt (v2)
   const rgbRef = useRef<Uint8Array | null>(null);     // Echtfarbe pro Punkt
+  const posRef = useRef<Float32Array | null>(null);   // Positionen (lokal) für Clipping
   const cloudCountRef = useRef(0);
   const colorArrRef = useRef<Uint8Array | null>(null);
   const viewModeRef = useRef<ViewMode>("3d");
   const cutModeRef = useRef(false);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { cutModeRef.current = cutMode; }, [cutMode]);
+  useEffect(() => { perimeterModeRef.current = perimeterMode; }, [perimeterMode]);
+  useEffect(() => { cloudFilterRef.current = cloudFilter; }, [cloudFilter]);
 
   const activeCamera = useCallback(
     () => (viewModeRef.current === "plan" ? orthoRef.current! : perspRef.current!),
@@ -197,8 +246,19 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     };
     rafRef.current = requestAnimationFrame(animate);
 
-    // Klick-Handler für das Schnitt-Werkzeug.
+    // Klick-Handler: Schnitt-Werkzeug ODER Perimeter (Parzelle/Zeichnen).
     const onClick = (ev: MouseEvent) => {
+      // Perimeter hat Vorrang, wenn aktiv.
+      if (perimeterModeRef.current === "parcel") {
+        const p = pickPoint(ev);
+        if (p) void fetchParcelAt(p);
+        return;
+      }
+      if (perimeterModeRef.current === "draw") {
+        const p = pickPoint(ev);
+        if (p) addDrawPoint(p);
+        return;
+      }
       if (!cutModeRef.current) return;
       const p = pickPoint(ev);
       if (!p) return;
@@ -211,6 +271,13 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
       }
     };
     renderer.domElement.addEventListener("click", onClick);
+    // Doppelklick schliesst das manuell gezeichnete Perimeter-Polygon.
+    const onDblClick = (ev: MouseEvent) => {
+      if (perimeterModeRef.current !== "draw") return;
+      ev.preventDefault();
+      closeDrawPolygon();
+    };
+    renderer.domElement.addEventListener("dblclick", onDblClick);
 
     // scene.json + cloud.bin + GLB laden.
     (async () => {
@@ -267,10 +334,13 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
       cancelAnimationFrame(rafRef.current);
       ro.disconnect();
       renderer.domElement.removeEventListener("click", onClick);
+      renderer.domElement.removeEventListener("dblclick", onDblClick);
       controls.dispose();
       disposePoints();
       disposeMesh();
       clearCutLines();
+      clearDrawTmp();
+      disposePerimeterObj();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement);
       rendererRef.current = null;
@@ -307,6 +377,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     }
     devRef.current = dev;
     rgbRef.current = rgb;
+    posRef.current = positions;
     cloudCountRef.current = count;
 
     // Anfangsfarbe: bei v2 nach ΔZ, sonst die (gebackene) Echtfarbe.
@@ -540,6 +611,208 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     }
   }
 
+  // ============================================ Bauperimeter =================
+  // Welt(lokal) <-> LV95: E = x + off[0], N = y + off[1].
+  function offset(): [number, number, number] | null {
+    return sceneJsonRef.current?.offset ?? null;
+  }
+
+  // Perimeter (LV95) als geschlossene Linien rendern (auf bbox-Mittelhöhe).
+  function renderPerimeter() {
+    disposePerimeterObj();
+    const scene = sceneRef.current;
+    const off = offset();
+    if (!scene || !off || perimeterRef.current.length === 0) return;
+    const group = new THREE.Group();
+    const mat = new THREE.LineBasicMaterial({ color: 0xff8c1a });
+    const z = planZRef.current;
+    for (const poly of perimeterRef.current) {
+      const pts = poly.map(([E, N]) => new THREE.Vector3(E - off[0], N - off[1], z));
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      group.add(new THREE.LineLoop(g, mat));
+    }
+    perimObjRef.current = group;
+    scene.add(group);
+  }
+
+  function disposePerimeterObj() {
+    const scene = sceneRef.current;
+    const g = perimObjRef.current;
+    if (!g) return;
+    scene?.remove(g);
+    g.traverse((o) => {
+      const l = o as THREE.Line;
+      (l.geometry as THREE.BufferGeometry)?.dispose?.();
+    });
+    perimObjRef.current = null;
+  }
+
+  // Lokale Polygone + bboxes für die Punkt-in-Polygon-Prüfung aufbauen.
+  function buildLocalPolys(): { polys: Float64Array[]; bboxes: Float64Array } | null {
+    const off = offset();
+    if (!off || perimeterRef.current.length === 0) return null;
+    const polys: Float64Array[] = [];
+    const bboxes = new Float64Array(perimeterRef.current.length * 4);
+    perimeterRef.current.forEach((poly, p) => {
+      const flat = new Float64Array(poly.length * 2);
+      let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+      poly.forEach(([E, N], i) => {
+        const x = E - off[0], y = N - off[1];
+        flat[i * 2] = x; flat[i * 2 + 1] = y;
+        if (x < minx) minx = x; if (x > maxx) maxx = x;
+        if (y < miny) miny = y; if (y > maxy) maxy = y;
+      });
+      polys.push(flat);
+      bboxes[p * 4] = minx; bboxes[p * 4 + 1] = miny; bboxes[p * 4 + 2] = maxx; bboxes[p * 4 + 3] = maxy;
+    });
+    return { polys, bboxes };
+  }
+
+  // Wolke nach Perimeter aufteilen: alle / nur innen / nur aussen (Index-Buffer).
+  function applyCloudFilter() {
+    const pts = pointsRef.current;
+    const pos = posRef.current;
+    if (!pts || !pos) return;
+    const filter = cloudFilterRef.current;
+    const geom = pts.geometry as THREE.BufferGeometry;
+    const built = buildLocalPolys();
+    if (filter === "all" || !built) {
+      geom.setIndex(null);
+      return;
+    }
+    const want = filter === "inside";
+    const count = cloudCountRef.current;
+    const idx: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const inside = pointInPolys(pos[i * 3], pos[i * 3 + 1], built.polys, built.bboxes);
+      if (inside === want) idx.push(i);
+    }
+    geom.setIndex(idx);
+  }
+
+  // Marker beim manuellen Zeichnen + Vorschau-Linie.
+  function addDrawPoint(p: THREE.Vector3) {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    drawPtsRef.current.push(p.clone());
+    const g = new THREE.SphereGeometry(radiusRef.current * 0.008, 10, 10);
+    const m = new THREE.MeshBasicMaterial({ color: 0xff8c1a });
+    const s = new THREE.Mesh(g, m);
+    s.position.copy(p);
+    scene.add(s);
+    drawTmpRef.current.push(s);
+    // Vorschau-Linie neu zeichnen.
+    if (drawPtsRef.current.length >= 2) {
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(drawPtsRef.current),
+        new THREE.LineBasicMaterial({ color: 0xff8c1a }),
+      );
+      scene.add(line);
+      drawTmpRef.current.push(line);
+    }
+    setDrawCount(drawPtsRef.current.length);
+  }
+
+  function clearDrawTmp() {
+    const scene = sceneRef.current;
+    drawTmpRef.current.forEach((o) => {
+      scene?.remove(o);
+      const any = o as THREE.Mesh | THREE.Line;
+      (any.geometry as THREE.BufferGeometry)?.dispose?.();
+      const mat = (any as THREE.Mesh).material;
+      if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
+      else (mat as THREE.Material)?.dispose?.();
+    });
+    drawTmpRef.current = [];
+    drawPtsRef.current = [];
+    setDrawCount(0);
+  }
+
+  function closeDrawPolygon() {
+    const off = offset();
+    if (!off) return;
+    if (drawPtsRef.current.length < 3) {
+      toast("Mindestens 3 Punkte für eine Fläche.", "error");
+      return;
+    }
+    const poly: [number, number][] = drawPtsRef.current.map((v) => [v.x + off[0], v.y + off[1]]);
+    clearDrawTmp();
+    setPerimeter((ps) => [...ps, poly]);
+    setParcels((ps) => [...ps, { egrid: null, number: "manuell", ak: null }]);
+    setPerimeterDirty(true);
+    setPerimeterMode("off");
+    toast("Fläche hinzugefügt.");
+  }
+
+  // Parzelle aus amtlicher Vermessung an Klickpunkt holen.
+  async function fetchParcelAt(p: THREE.Vector3) {
+    const off = offset();
+    if (!off) return;
+    const E = p.x + off[0], N = p.y + off[1];
+    setBusy(true);
+    try {
+      const r = await fetch(`${BP}/api/cadastral/parcel?e=${E}&n=${N}`, { cache: "no-store" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? `Fehler ${r.status}`);
+      setPerimeter((ps) => [...ps, data.polygon as [number, number][]]);
+      setParcels((ps) => [...ps, { egrid: data.egrid, number: data.number, ak: data.ak }]);
+      setPerimeterDirty(true);
+      toast(`Parzelle ${data.number ?? ""}${data.ak ? " (" + data.ak + ")" : ""} hinzugefügt.`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function removeParcel(i: number) {
+    setPerimeter((ps) => ps.filter((_, k) => k !== i));
+    setParcels((ps) => ps.filter((_, k) => k !== i));
+    setPerimeterDirty(true);
+  }
+
+  function clearPerimeter() {
+    clearDrawTmp();
+    setPerimeter([]);
+    setParcels([]);
+    setPerimeterDirty(true);
+    setCloudFilter("all");
+  }
+
+  async function savePerimeter() {
+    setSavingPerimeter(true);
+    try {
+      const r = await fetch(`${BP}/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          perimeter: perimeter.length ? perimeter : null,
+          perimeterParcels: parcels,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `Fehler ${r.status}`);
+      setPerimeterDirty(false);
+      toast("Perimeter beim Projekt gespeichert.");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setSavingPerimeter(false);
+    }
+  }
+
+  // Perimeter rendern, sobald er sich ändert / die Szene bereit ist.
+  useEffect(() => {
+    perimeterRef.current = perimeter;
+    if (ready) { renderPerimeter(); applyCloudFilter(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perimeter, ready]);
+
+  // Wolken-Aufteilung neu anwenden.
+  useEffect(() => {
+    if (ready) applyCloudFilter();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloudFilter, ready]);
+
   // ---------------------------------------------------------- Dispose --------
   function disposePoints() {
     const p = pointsRef.current;
@@ -566,6 +839,8 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   }
 
   function toggleCut() {
+    setPerimeterMode("off");
+    clearDrawTmp();
     setCutMode((v) => {
       const next = !v;
       if (next) {
@@ -574,6 +849,13 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
       }
       return next;
     });
+  }
+
+  // Perimeter-Modus umschalten (deaktiviert das Schnitt-Werkzeug).
+  function setPMode(next: PerimeterMode) {
+    setCutMode(false);
+    clearDrawTmp();
+    setPerimeterMode((cur) => (cur === next ? "off" : next));
   }
 
   function clearCuts() {
@@ -607,7 +889,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
         >
           <div
             ref={containerRef}
-            style={{ position: "absolute", inset: 0, cursor: cutMode ? "crosshair" : "grab" }}
+            style={{ position: "absolute", inset: 0, cursor: (cutMode || perimeterMode !== "off") ? "crosshair" : "grab" }}
           />
           {/* Steuerknöpfe oben rechts: Werkzeuge ein/aus + Vollbild */}
           <div
@@ -692,6 +974,61 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
               </button>
             </div>
             <div className="small muted" style={{ marginTop: 6 }}>Halbtransparent über der Ist-Wolke.</div>
+          </div>
+
+          <div className="panel">
+            <label className="small">Bauperimeter</label>
+            <div className="grid cols-2" style={{ marginTop: 8 }}>
+              <button className={perimeterMode === "parcel" ? "primary" : ""} onClick={() => setPMode("parcel")} disabled={!ready}>
+                Parzelle
+              </button>
+              <button className={perimeterMode === "draw" ? "primary" : ""} onClick={() => setPMode("draw")} disabled={!ready}>
+                Zeichnen
+              </button>
+            </div>
+            {perimeterMode === "parcel" && (
+              <div className="small muted" style={{ marginTop: 6 }}>
+                Auf eine Parzelle klicken — Grenze kommt aus der amtlichen Vermessung.
+              </div>
+            )}
+            {perimeterMode === "draw" && (
+              <div className="small muted" style={{ marginTop: 6 }}>
+                Punkte klicken; Doppelklick schliesst die Fläche ({drawCount}).
+                {drawCount >= 3 && (
+                  <button style={{ marginTop: 6 }} onClick={closeDrawPolygon}>Fläche schliessen</button>
+                )}
+              </div>
+            )}
+
+            {perimeter.length > 0 && (
+              <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                {parcels.map((pc, i) => (
+                  <div key={i} className="spread small" style={{ alignItems: "center" }}>
+                    <span>
+                      {pc.number === "manuell"
+                        ? `Fläche ${i + 1} (gezeichnet)`
+                        : `Parz. ${pc.number ?? "?"}${pc.ak ? " " + pc.ak : ""}`}
+                    </span>
+                    <button onClick={() => removeParcel(i)} title="Entfernen" style={{ padding: "2px 8px" }}>x</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <label className="small" style={{ display: "block", marginTop: 10 }}>Wolke anzeigen</label>
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 6 }}>
+              <button className={cloudFilter === "all" ? "primary" : ""} onClick={() => setCloudFilter("all")}>alle</button>
+              <button className={cloudFilter === "inside" ? "primary" : ""} onClick={() => setCloudFilter("inside")} disabled={perimeter.length === 0}>innen</button>
+              <button className={cloudFilter === "outside" ? "primary" : ""} onClick={() => setCloudFilter("outside")} disabled={perimeter.length === 0}>aussen</button>
+            </div>
+
+            <div className="grid cols-2" style={{ marginTop: 8 }}>
+              <button className="primary" disabled={!perimeterDirty || savingPerimeter} onClick={savePerimeter}>
+                {savingPerimeter ? "Speichert …" : "Speichern"}
+              </button>
+              <button disabled={perimeter.length === 0} onClick={clearPerimeter}>Alle löschen</button>
+            </div>
+            {perimeterDirty && <div className="small muted" style={{ marginTop: 6 }}>Ungespeicherte Änderung.</div>}
           </div>
 
           <div className="panel">

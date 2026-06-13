@@ -21,6 +21,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const patch: Record<string, unknown> = {};
   if (typeof body?.name === "string") patch.name = body.name.trim();
   if (typeof body?.notes === "string") patch.notes = body.notes;
+  // Bauperimeter setzen/loeschen. perimeter = Liste von Polygonen [[ [E,N],... ],...].
+  if ("perimeter" in body) {
+    const p = body.perimeter;
+    if (p === null) { patch.perimeter = null; patch.perimeterParcels = null; }
+    else if (Array.isArray(p)) {
+      patch.perimeter = p;
+      if (Array.isArray(body.perimeterParcels)) patch.perimeterParcels = body.perimeterParcels;
+    } else {
+      return NextResponse.json({ error: "perimeter muss eine Polygon-Liste oder null sein." }, { status: 400 });
+    }
+  }
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "Nichts zu aendern." }, { status: 400 });
   }

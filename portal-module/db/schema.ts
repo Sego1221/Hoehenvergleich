@@ -22,6 +22,13 @@ export const projects = hv.table("projects", {
   adresse: text("adresse"),                           // Projektadresse (Strasse/Nr.)
   ort: text("ort"),                                   // Ort
   notes: text("notes"),
+  // Bauperimeter (LV95): Liste von Polygonen [[ [E,N], ... ], ...] — eine
+  // Parzelle = ein Polygon; mehrere Parzellen werden additiv geprüft (Punkt
+  // gilt als "innen", wenn er in irgendeinem Polygon liegt). Begrenzt Anzeige
+  // und Auswertung; ohne Perimeter gilt die IFC-Ausdehnung.
+  perimeter: jsonb("perimeter"),
+  // Metadaten je Polygon (parallel): [{ egrid, number, ak }] (amtliche Vermessung).
+  perimeterParcels: jsonb("perimeter_parcels"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ byNummer: index("projects_nummer_idx").on(t.projektNummer) }));
 
