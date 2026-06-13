@@ -13,7 +13,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import engine, pdf, build3d, dxf as dxfmod
+from . import engine, pdf, build3d, dxf as dxfmod, bauteil
 
 app = FastAPI(title="Höhenvergleich Compute", version="0.1.0")
 
@@ -97,6 +97,65 @@ async def _save_upload(up: UploadFile, suffix: str) -> str:
 @app.get("/health")
 def health():
     return {"status": "ok", "jobs": len(_RESULTS)}
+
+
+@app.post("/bauteil/evaluate")
+async def bauteil_evaluate(
+    soll: UploadFile = File(..., description="Struktur-IFC (Etappe/Betonage)"),
+    cloud: UploadFile = File(..., description="As-Built-Punktwolke LAZ/LAS"),
+    transform: str = Form(..., description="{tE,tN,tH,angle_deg} Strukturmodell-Georef"),
+    res: float = Form(0.10),
+    tol: float = Form(0.05),
+):
+    """Baufortschritt: Struktur-IFC + Scan -> Status je Bauteil (gebaut/nicht/verdeckt)
+    + nach Status eingefärbtes GLB. Transform-Richtung wird automatisch geprüft."""
+    try:
+        tf = json.loads(transform)
+        for k in ("tE", "tN", "tH"):
+            tf[k] = float(tf[k])
+        tf["angle_deg"] = float(tf.get("angle_deg", 0.0))
+    except Exception:
+        raise HTTPException(400, "transform muss {tE,tN,tH,angle_deg} sein.")
+    soll_ext = os.path.splitext(soll.filename or "")[1].lower()
+    if soll_ext not in (".ifc", ".ifczip"):
+        raise HTTPException(415, "Soll muss ein IFC sein.")
+    ist_ext = os.path.splitext(cloud.filename or "")[1].lower()
+    if ist_ext not in (".laz", ".las"):
+        raise HTTPException(415, "Ist muss LAZ/LAS sein.")
+    ifc_path = await _save_upload(soll, soll_ext)
+    cloud_path = await _save_upload(cloud, ist_ext)
+    jid = uuid.uuid4().hex[:12]
+    jd = build3d.job_dir(jid)
+    glb = os.path.join(jd, "status.glb")
+    try:
+        result = bauteil.evaluate(ifc_path, cloud_path, tf, res=res, tol=tol, out_glb=glb)
+    except ValueError as e:
+        _rm(ifc_path, cloud_path)
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        _rm(ifc_path, cloud_path)
+        raise HTTPException(400, f"Auswertung fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
+    _rm(ifc_path, cloud_path)
+    try:
+        with open(os.path.join(jd, "bauteil.json"), "w", encoding="utf-8") as fh:
+            json.dump(result, fh, ensure_ascii=False, default=str)
+    except OSError:
+        pass
+    result["job_id"] = jid
+    if result.get("scene"):
+        result["meshUrl"] = f"/jobs/{jid}/status.glb"
+        result["offset"] = result["scene"]["offset"]
+        result["bbox"] = {"min": result["scene"]["bbox_min"], "max": result["scene"]["bbox_max"]}
+    return result
+
+
+@app.get("/jobs/{job_id}/status.glb")
+def bauteil_status_glb(job_id: str):
+    """Nach Status eingefärbtes Struktur-GLB für den Baufortschritt-Viewer."""
+    path = os.path.join(build3d.job_dir(job_id), "status.glb")
+    if not os.path.exists(path):
+        raise HTTPException(404, "status.glb nicht vorhanden.")
+    return FileResponse(path, media_type="model/gltf-binary")
 
 
 @app.post("/dxf/polylines")

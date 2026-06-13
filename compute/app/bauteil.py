@@ -146,14 +146,70 @@ def element_status(elem: dict, transform: dict, xyz: np.ndarray, res=0.10, tol=0
             "n_points": int(cnt.sum())}
 
 
-def evaluate(ifc_path: str, cloud_path: str, transform: dict, res=0.10, tol=0.05) -> dict:
-    """Kompletter Baufortschritt-Lauf: alle Bauteile vs. Wolke -> Status je Element + Summary."""
+STATUS_COLOR = {
+    "gebaut": (40, 180, 80), "nicht_gebaut": (150, 150, 150), "verdeckt": (240, 150, 40),
+}
+
+
+def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):
+    """Richtige Transform-Richtung waehlen: liegt eine Bauteil-Mitte in der Wolken-
+    BBox? Sonst Vorzeichen von T drehen (lokal->LV95 vs. LV95->lokal). Gibt
+    (transform_used, flipped|None) zurueck; None = keine Richtung trifft (Warnung)."""
+    cmin = xyz[:, :2].min(0); cmax = xyz[:, :2].max(0)
+    def hits(t):
+        for e in elements:
+            c = to_lv95(e["V"], t).mean(0)
+            if cmin[0] - 50 <= c[0] <= cmax[0] + 50 and cmin[1] - 50 <= c[1] <= cmax[1] + 50:
+                return True
+        return False
+    if hits(transform):
+        return transform, False
+    flip = {**transform, "tE": -transform["tE"], "tN": -transform["tN"], "tH": -transform["tH"]}
+    if hits(flip):
+        return flip, True
+    return transform, None
+
+
+def export_status_glb(elements: list[dict], rows: list[dict], transform: dict, out_glb: str) -> dict:
+    """Struktur-Bauteile als GLB, je Bauteil nach Status eingefaerbt, um gemeinsamen
+    Offset verschoben (float32-tauglich). Rueckgabe: offset/bbox fuer scene.json."""
+    import trimesh
+    by_guid = {r["guid"]: r for r in rows}
+    Vs = [to_lv95(e["V"], transform) for e in elements]
+    allV = np.vstack(Vs)
+    offset = np.floor(allV.min(axis=0))
+    scene = trimesh.Scene()
+    for e, V in zip(elements, Vs):
+        col = STATUS_COLOR.get(by_guid.get(e["guid"], {}).get("status", "nicht_gebaut"), (150, 150, 150))
+        m = trimesh.Trimesh(vertices=(V - offset).astype(np.float32), faces=e["F"], process=False)
+        m.visual.vertex_colors = np.tile(np.array([*col, 255], np.uint8), (len(m.vertices), 1))
+        scene.add_geometry(m)
+    scene.export(out_glb, file_type="glb")
+    return {"offset": offset.tolist(),
+            "bbox_min": allV.min(axis=0).tolist(), "bbox_max": allV.max(axis=0).tolist(),
+            "bytes": int(os.path.getsize(out_glb))}
+
+
+def evaluate(ifc_path: str, cloud_path: str, transform: dict, res=0.10, tol=0.05,
+             out_glb: str | None = None) -> dict:
+    """Kompletter Baufortschritt-Lauf: alle Bauteile vs. Wolke -> Status je Element + Summary.
+
+    Waehlt automatisch die Transform-Richtung (Overlap-Check) und exportiert
+    optional ein nach Status eingefaerbtes GLB (out_glb) fuer den Viewer.
+    """
     from . import engine
     elements = load_structural_elements(ifc_path)
     xyz, _ = engine.load_cloud(cloud_path)
-    rows = [element_status(e, transform, xyz, res=res, tol=tol) for e in elements]
+    tf, flipped = choose_transform(elements, transform, xyz)
+    rows = [element_status(e, tf, xyz, res=res, tol=tol) for e in elements]
     summ = {"n_elements": len(rows),
             "gebaut": sum(r["status"] == "gebaut" for r in rows),
             "nicht_gebaut": sum(r["status"] == "nicht_gebaut" for r in rows),
             "verdeckt": sum(r["status"] == "verdeckt" for r in rows)}
-    return {"summary": summ, "elements": rows}
+    scene = None
+    if out_glb:
+        scene = export_status_glb(elements, rows, tf, out_glb)
+    return {"summary": summ, "elements": rows,
+            "transform_flipped": flipped,
+            "transform_warning": (flipped is None),
+            "scene": scene}
