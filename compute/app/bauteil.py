@@ -147,8 +147,131 @@ def element_status(elem: dict, transform: dict, xyz: np.ndarray, res=0.10, tol=0
 
 
 STATUS_COLOR = {
-    "gebaut": (40, 180, 80), "nicht_gebaut": (150, 150, 150), "verdeckt": (240, 150, 40),
+    "gebaut": (40, 180, 80), "nicht_gebaut": (150, 150, 150),
+    "verdeckt": (240, 150, 40), "nicht_erfasst": (90, 90, 110),
 }
+
+
+# ===================== Baufortschritt v2: Modell-Katalog + Tages-Scans =====================
+def model_dir(model_id: str) -> str:
+    from . import build3d
+    import os as _os
+    d = _os.path.join(build3d.data_root(), "bfmodels", model_id)
+    _os.makedirs(d, exist_ok=True)
+    return d
+
+
+def build_catalog(ifc_paths: list[str]) -> list[dict]:
+    """Mehrere Struktur-IFCs zu EINEM Bauteil-Katalog (lokal, Meter) zusammenfuehren.
+
+    Dedupliziert nach IFC-GUID; Hilfsobjekte (<8 Verts) werden ausgefiltert.
+    Geometrie bleibt LOKAL; die LV95-Transformation erfolgt erst beim Scan
+    (mit Richtungs-Check gegen die jeweilige Wolke).
+    """
+    cat: list[dict] = []
+    seen: set = set()
+    for p in ifc_paths:
+        for e in load_structural_elements(p):
+            g = e["guid"]
+            if g in seen:
+                continue
+            seen.add(g)
+            cat.append(e)
+    if not cat:
+        raise ValueError("Keine verwertbaren Bauteile in den IFCs.")
+    return cat
+
+
+def save_model(mdir: str, catalog: list[dict], transform: dict) -> dict:
+    """Katalog (Geometrie lokal + Attribute) + Transform persistieren. Gibt Summary."""
+    import os as _os, json as _json, pickle as _pickle
+    with open(_os.path.join(mdir, "catalog.pkl"), "wb") as fh:
+        _pickle.dump({"catalog": catalog, "transform": transform}, fh)
+    attrs = [{k: e[k] for k in ("guid", "name", "bauteil", "betonage", "material", "kote_ok", "kote_uk")} for e in catalog]
+    with open(_os.path.join(mdir, "catalog.json"), "w", encoding="utf-8") as fh:
+        _json.dump({"elements": attrs}, fh, ensure_ascii=False, default=str)
+    betonagen = sorted({str(e.get("betonage")) for e in catalog if e.get("betonage")})
+    return {"n_elements": len(catalog), "betonagen": betonagen, "elements": attrs}
+
+
+def load_model(mdir: str):
+    import os as _os, pickle as _pickle
+    p = _os.path.join(mdir, "catalog.pkl")
+    if not _os.path.exists(p):
+        raise ValueError("Modell-Katalog nicht gefunden.")
+    with open(p, "rb") as fh:
+        d = _pickle.load(fh)
+    return d["catalog"], d["transform"]
+
+
+def _status_lv95(V: np.ndarray, F: np.ndarray, xyz: np.ndarray, res: float, tol: float) -> dict:
+    """Status eines Bauteils (Geometrie bereits LV95). 4 Zustaende inkl. nicht_erfasst."""
+    x0, y0 = V[:, 0].min(), V[:, 1].min()
+    x1, y1 = V[:, 0].max(), V[:, 1].max()
+    nx = max(int(np.ceil((x1 - x0) / res)), 1); ny = max(int(np.ceil((y1 - y0) / res)), 1)
+    soll = _rasterize_top(V, F, x0, y0, res, nx, ny)
+    valid = np.isfinite(soll); tot = int(valid.sum())
+    if tot == 0:
+        return {"status": "nicht_erfasst", "frac_gebaut": 0.0, "frac_nicht": 0.0,
+                "frac_verdeckt": 0.0, "frac_unerfasst": 1.0, "dz_mean": None, "n_points": 0, "area_m2": 0.0}
+    m = (xyz[:, 0] >= x0 - 0.5) & (xyz[:, 0] <= x1 + 0.5) & (xyz[:, 1] >= y0 - 0.5) & (xyz[:, 1] <= y1 + 0.5)
+    cx, cy, cz = xyz[m, 0], xyz[m, 1], xyz[m, 2]
+    top = np.full(ny * nx, -np.inf); cnt = np.zeros(ny * nx, dtype=np.int64)
+    if cx.size:
+        ix = np.floor((cx - x0) / res).astype(np.int64); iy = np.floor((cy - y0) / res).astype(np.int64)
+        ok = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+        idx = iy[ok] * nx + ix[ok]
+        np.maximum.at(top, idx, cz[ok]); np.add.at(cnt, idx, 1)
+    top = top.reshape(ny, nx); cnt = cnt.reshape(ny, nx); top[cnt == 0] = np.nan
+    dz = top - soll; has = cnt > 0
+    geb = valid & has & (np.abs(dz) <= tol)
+    ver = valid & has & (dz > tol)
+    nic = valid & has & (dz < -tol)
+    une = valid & (~has)                     # im Footprint, aber keine Punkte -> nicht erfasst
+    fg, fn, fv, fu = geb.sum() / tot, nic.sum() / tot, ver.sum() / tot, une.sum() / tot
+    status = ["gebaut", "nicht_gebaut", "verdeckt", "nicht_erfasst"][int(np.argmax([fg, fn, fv, fu]))]
+    return {"status": status, "frac_gebaut": round(float(fg), 3), "frac_nicht": round(float(fn), 3),
+            "frac_verdeckt": round(float(fv), 3), "frac_unerfasst": round(float(fu), 3),
+            "dz_mean": (round(float(np.nanmean(dz[geb])), 3) if geb.any() else None),
+            "n_points": int(cnt.sum()), "area_m2": round(tot * res * res, 2)}
+
+
+def evaluate_scan(catalog: list[dict], transform: dict, cloud_path: str,
+                  out_glb: str | None = None, res=0.10, tol=0.05) -> dict:
+    """Tages-Scan gegen den ganzen Katalog. Richtung automatisch (choose_transform)."""
+    from . import engine
+    xyz, _ = engine.load_cloud(cloud_path)
+    tf, flipped = choose_transform(catalog, transform, xyz)
+    Vs = [to_lv95(e["V"], tf) for e in catalog]
+    rows = []
+    for e, V in zip(catalog, Vs):
+        s = _status_lv95(V, e["F"], xyz, res, tol)
+        rows.append({"guid": e["guid"], "name": e["name"], "bauteil": e["bauteil"],
+                     "betonage": e["betonage"], "material": e["material"],
+                     "kote_ok": e["kote_ok"], "kote_uk": e["kote_uk"], **s})
+    summ = {"n_elements": len(rows)}
+    for st in ("gebaut", "nicht_gebaut", "verdeckt", "nicht_erfasst"):
+        summ[st] = sum(r["status"] == st for r in rows)
+    scene = None
+    if out_glb:
+        by = {r["guid"]: r for r in rows}
+        scene = _glb_from_geom(Vs, [e["F"] for e in catalog], [e["guid"] for e in catalog], by, out_glb)
+    return {"summary": summ, "elements": rows, "transform_flipped": flipped,
+            "transform_warning": (flipped is None), "scene": scene}
+
+
+def _glb_from_geom(Vs, Fs, guids, by_guid, out_glb) -> dict:
+    import trimesh
+    allV = np.vstack(Vs); offset = np.floor(allV.min(axis=0))
+    scene = trimesh.Scene()
+    for V, F, g in zip(Vs, Fs, guids):
+        col = STATUS_COLOR.get(by_guid.get(g, {}).get("status", "nicht_erfasst"), (150, 150, 150))
+        m = trimesh.Trimesh(vertices=(V - offset).astype(np.float32), faces=F, process=False)
+        m.visual.vertex_colors = np.tile(np.array([*col, 255], np.uint8), (len(m.vertices), 1))
+        scene.add_geometry(m)
+    scene.export(out_glb, file_type="glb")
+    return {"offset": offset.tolist(), "bbox_min": allV.min(axis=0).tolist(),
+            "bbox_max": allV.max(axis=0).tolist(), "bytes": int(os.path.getsize(out_glb))}
 
 
 def choose_transform(elements: list[dict], transform: dict, xyz: np.ndarray):

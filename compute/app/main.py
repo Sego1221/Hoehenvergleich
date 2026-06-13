@@ -149,6 +149,76 @@ async def bauteil_evaluate(
     return result
 
 
+@app.post("/bauteil/model")
+async def bauteil_model(
+    ifcs: list[UploadFile] = File(..., description="Ein oder mehrere Struktur-IFCs (Etappen)"),
+    transform: str = Form(..., description="{tE,tN,tH,angle_deg} Projekt-Georef (lokal->LV95)"),
+    model_id: str = Form("", description="Vorhandenes Modell ergaenzen (sonst neu)"),
+):
+    """Bauteil-Katalog anlegen/ergaenzen: IFCs persistieren + zu einem Katalog
+    zusammenfuehren (dedupliziert nach GUID). Liefert model_id + Element-Liste."""
+    try:
+        tf = json.loads(transform)
+        for k in ("tE", "tN", "tH"):
+            tf[k] = float(tf[k])
+        tf["angle_deg"] = float(tf.get("angle_deg", 0.0))
+    except Exception:
+        raise HTTPException(400, "transform muss {tE,tN,tH,angle_deg} sein.")
+    mid = (model_id or uuid.uuid4().hex[:12]).strip()
+    mdir = bauteil.model_dir(mid)
+    srcdir = os.path.join(mdir, "src"); os.makedirs(srcdir, exist_ok=True)
+    for up in ifcs:
+        ext = os.path.splitext(up.filename or "")[1].lower()
+        if ext not in (".ifc", ".ifczip"):
+            raise HTTPException(415, f"Nur IFC erlaubt ({up.filename}).")
+        dst = os.path.join(srcdir, uuid.uuid4().hex[:8] + ext)
+        with open(dst, "wb") as fh:
+            while chunk := await up.read(1 << 20):
+                fh.write(chunk)
+    import glob as _glob
+    paths = sorted(_glob.glob(os.path.join(srcdir, "*.ifc")) + _glob.glob(os.path.join(srcdir, "*.ifczip")))
+    try:
+        catalog = bauteil.build_catalog(paths)
+        summary = bauteil.save_model(mdir, catalog, tf)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Modellaufbau fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
+    return {"model_id": mid, **summary}
+
+
+@app.post("/bauteil/model/{model_id}/scan")
+async def bauteil_scan(
+    model_id: str,
+    cloud: UploadFile = File(..., description="Tages-Scan LAZ/LAS"),
+    res: float = Form(0.10),
+    tol: float = Form(0.05),
+):
+    """Tages-Scan gegen den Modell-Katalog auswerten -> Status je Bauteil + GLB."""
+    mdir = bauteil.model_dir(model_id)
+    try:
+        catalog, tf = bauteil.load_model(mdir)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    ext = os.path.splitext(cloud.filename or "")[1].lower()
+    if ext not in (".laz", ".las"):
+        raise HTTPException(415, "Scan muss LAZ/LAS sein.")
+    cloud_path = await _save_upload(cloud, ext)
+    jid = uuid.uuid4().hex[:12]
+    jd = build3d.job_dir(jid)
+    glb = os.path.join(jd, "status.glb")
+    try:
+        result = bauteil.evaluate_scan(catalog, tf, cloud_path, out_glb=glb, res=res, tol=tol)
+    except Exception as e:
+        _rm(cloud_path)
+        raise HTTPException(400, f"Scan-Auswertung fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
+    _rm(cloud_path)
+    result["job_id"] = jid
+    if result.get("scene"):
+        result["meshUrl"] = f"/jobs/{jid}/status.glb"
+    return result
+
+
 @app.get("/jobs/{job_id}/status.glb")
 def bauteil_status_glb(job_id: str):
     """Nach Status eingefärbtes Struktur-GLB für den Baufortschritt-Viewer."""
