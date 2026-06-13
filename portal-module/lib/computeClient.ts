@@ -162,6 +162,19 @@ export async function bauteilScan(modelId: string, cloud: Blob, cloudName: strin
   return req<BauteilResult>(`/bauteil/model/${modelId}/scan`, { method: "POST", body: fd });
 }
 
+/** Bestehende Auswertung wiederholen (gespeicherte Scan-Wolke, aktueller Katalog/Georef). */
+export async function bauteilRescan(
+  modelId: string, jobId: string,
+  transform: { tE: number; tN: number; tH: number; angle_deg: number },
+): Promise<BauteilResult> {
+  const fd = new FormData();
+  fd.append("transform", JSON.stringify(transform));
+  return req<BauteilResult>(`/bauteil/model/${modelId}/rescan/${jobId}`, { method: "POST", body: fd });
+}
+
+/** GLB des ganzen Katalogs (Kontroll-Ansicht). */
+export const modelPreviewGlbUrl = (modelId: string) => `${BASE}/bauteil/model/${modelId}/preview.glb`;
+
 /** Eine aus DXF gelesene Polylinie (Bauperimeter/Bereich). */
 export type DxfPolyline = {
   layer: string; closed: boolean; n: number;

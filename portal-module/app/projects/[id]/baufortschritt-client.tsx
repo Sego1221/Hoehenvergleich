@@ -47,6 +47,8 @@ export function BaufortschrittPanel({
   const [scanOpen, setScanOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [rerunning, setRerunning] = useState<string | null>(null);
   const modelFileRef = useRef<HTMLInputElement>(null);
 
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -104,6 +106,19 @@ export function BaufortschrittPanel({
     finally { setBusy(false); }
   }
 
+  async function rerun(run: Run) {
+    setRerunning(run.id);
+    try {
+      const r = await fetch(`${BP}/api/baufortschritt/${run.id}/rescan`, { method: "POST" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? `Fehler ${r.status}`);
+      setRuns((rs) => rs.map((x) => (x.id === run.id ? { ...x, ...(data as Run) } : x)));
+      if (sel?.id === run.id) setSel({ ...sel, ...(data as Run) });
+      toast("Auswertung erneuert.");
+    } catch (e) { toast((e as Error).message, "error"); }
+    finally { setRerunning(null); }
+  }
+
   async function deleteModel() {
     setBusy(true);
     try {
@@ -152,6 +167,7 @@ export function BaufortschrittPanel({
             <button disabled={busy} onClick={() => modelFileRef.current?.click()}>
               {busy ? "Lädt …" : model ? "Etappen ergänzen / ersetzen" : "Etappen-IFCs hochladen"}
             </button>
+            {model && <button onClick={() => setShowPreview((v) => !v)}>{showPreview ? "Vorschau aus" : "Modell ansehen"}</button>}
             {model && !confirmDel && <button disabled={busy} onClick={() => setConfirmDel(true)}>Modell löschen</button>}
             {model && confirmDel && (
               <>
@@ -192,6 +208,20 @@ export function BaufortschrittPanel({
             Lade alle Etappen-IFCs (Bodenplatte + Wände …) einmal hoch. Danach täglich nur den Scan.
           </div>
         )}
+        {model && showPreview && (
+          <div style={{ marginTop: 10 }}>
+            <div className="small muted" style={{ marginBottom: 6 }}>
+              Ganzes Modell (alle Etappen) zur Kontrolle — oben rechts „Material/Status". Liegt es nicht über der Baustelle, stimmt die Georef nicht.
+            </div>
+            <StatusViewer3D
+              url={`${BP}/api/projects/${projectId}/bf-model/preview.glb`}
+              statusByGuid={{}}
+              guids={(model.elements ?? []).map((e) => e.guid)}
+              defaultMode="material"
+              height={420}
+            />
+          </div>
+        )}
       </div>
 
       {/* Tages-Scans */}
@@ -203,7 +233,7 @@ export function BaufortschrittPanel({
         <table>
           <thead><tr>
             <th style={{ width: 120 }}>Datum</th><th>Scan</th>
-            <th style={{ width: 90 }}>gebaut</th><th style={{ width: 100 }}>nicht erf.</th><th style={{ width: 70 }}></th>
+            <th style={{ width: 90 }}>gebaut</th><th style={{ width: 100 }}>nicht erf.</th><th style={{ width: 160 }}></th>
           </tr></thead>
           <tbody>
             {runs.length === 0 && <tr><td colSpan={5} className="muted">Noch keine Scans.</td></tr>}
@@ -213,7 +243,14 @@ export function BaufortschrittPanel({
                 <td className="muted">{r.scanName ?? r.name}</td>
                 <td style={{ color: COLOR.gebaut }}>{r.summary?.gebaut ?? "—"}</td>
                 <td className="muted">{r.summary?.nicht_erfasst ?? "—"}</td>
-                <td><button onClick={() => setSel(r)}>Öffnen</button></td>
+                <td>
+                  <div className="row" style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => setSel(r)}>Öffnen</button>
+                    <button disabled={rerunning === r.id} onClick={() => void rerun(r)} title="Gegen aktuellen Katalog + Georef neu auswerten">
+                      {rerunning === r.id ? "…" : "Neu auswerten"}
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

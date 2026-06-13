@@ -280,11 +280,62 @@ async def bauteil_scan(
     except Exception as e:
         _rm(cloud_path)
         raise HTTPException(400, f"Scan-Auswertung fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
-    _rm(cloud_path)
+    # Scan-Wolke fuer spaeteres Neu-Auswerten behalten.
+    try:
+        import shutil as _sh
+        _sh.move(cloud_path, os.path.join(jd, "scan" + ext))
+    except OSError:
+        _rm(cloud_path)
     result["job_id"] = jid
     if result.get("scene"):
         result["meshUrl"] = f"/jobs/{jid}/status.glb"
     return result
+
+
+@app.post("/bauteil/model/{model_id}/rescan/{job_id}")
+async def bauteil_rescan(model_id: str, job_id: str, transform: str = Form(""),
+                         res: float = Form(0.10), tol: float = Form(0.05)):
+    """Bestehende Auswertung wiederholen: gespeicherte Scan-Wolke gegen den
+    AKTUELLEN Katalog + (optional) aktuelle Georef neu auswerten."""
+    mdir = bauteil.model_dir(model_id)
+    try:
+        catalog, tf = bauteil.load_model(mdir)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if transform.strip():
+        try:
+            t = json.loads(transform)
+            tf = {"tE": float(t["tE"]), "tN": float(t["tN"]), "tH": float(t["tH"]),
+                  "angle_deg": float(t.get("angle_deg", 0.0))}
+        except Exception:
+            raise HTTPException(400, "transform ungueltig.")
+    jd = build3d.job_dir(job_id)
+    import glob as _glob
+    cand = _glob.glob(os.path.join(jd, "scan.*"))
+    if not cand:
+        raise HTTPException(404, "Gespeicherte Scan-Wolke nicht gefunden (Scan erneut hochladen).")
+    glb = os.path.join(jd, "status.glb")
+    try:
+        result = bauteil.evaluate_scan(catalog, tf, cand[0], out_glb=glb, res=res, tol=tol)
+    except Exception as e:
+        raise HTTPException(400, f"Neu-Auswertung fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
+    result["job_id"] = job_id
+    if result.get("scene"):
+        result["meshUrl"] = f"/jobs/{job_id}/status.glb"
+    return result
+
+
+@app.get("/bauteil/model/{model_id}/preview.glb")
+def bauteil_model_preview(model_id: str):
+    """GLB des ganzen Katalogs (alle Etappen, IFC-Farben) zur Kontrolle."""
+    mdir = bauteil.model_dir(model_id)
+    try:
+        path = bauteil.catalog_preview_glb(mdir)
+    except ValueError:
+        raise HTTPException(404, "Kein Modell-Katalog vorhanden.")
+    except Exception as e:
+        raise HTTPException(400, f"Vorschau fehlgeschlagen: {type(e).__name__}: {str(e)[:200]}")
+    return FileResponse(path, media_type="model/gltf-binary")
 
 
 @app.get("/jobs/{job_id}/status.glb")

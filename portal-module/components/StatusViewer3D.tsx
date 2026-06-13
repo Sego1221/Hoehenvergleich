@@ -19,9 +19,10 @@ const STATUSES = [
 const HEX: Record<string, string> = { gebaut: "#28b450", nicht_gebaut: "#969696", verdeckt: "#f0962a", nicht_erfasst: "#5a5a6e" };
 
 export default function StatusViewer3D({
-  url, statusByGuid, guids, height = 480,
+  url, statusByGuid, guids, height = 480, defaultMode = "status",
 }: {
-  url: string; statusByGuid: Record<string, string>; guids: (string | null)[]; height?: number;
+  url: string; statusByGuid: Record<string, string>; guids: (string | null)[];
+  height?: number; defaultMode?: "status" | "material";
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const meshesRef = useRef<{ guid: string; mesh: THREE.Mesh; orig: THREE.Material }[]>([]);
@@ -29,10 +30,10 @@ export default function StatusViewer3D({
   const mapRef = useRef(statusByGuid);
   const guidsRef = useRef(guids);
   const visRef = useRef<Record<string, boolean>>({ gebaut: true, nicht_gebaut: true, verdeckt: true, nicht_erfasst: true });
-  const modeRef = useRef<"status" | "material">("status");
+  const modeRef = useRef<"status" | "material">(defaultMode);
   const [status, setStatus] = useState("Lade Modell …");
   const [vis, setVis] = useState<Record<string, boolean>>(visRef.current);
-  const [mode, setMode] = useState<"status" | "material">("status");
+  const [mode, setMode] = useState<"status" | "material">(defaultMode);
   mapRef.current = statusByGuid;
   guidsRef.current = guids;
 

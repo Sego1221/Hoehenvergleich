@@ -266,6 +266,18 @@ def _status_surface(V: np.ndarray, F: np.ndarray, xyz: np.ndarray, res: float, t
             "frac_nicht": round(float(1 - cov), 3)}
 
 
+def catalog_preview_glb(mdir: str) -> str:
+    """GLB des GANZEN Katalogs (alle Etappen, IFC-Farben) zur Kontrolle/Georef-
+    Pruefung. Geometrie LV95 (stored transform). Pfad model_dir/preview.glb."""
+    import os as _os
+    catalog, tf = load_model(mdir)
+    out = _os.path.join(mdir, "preview.glb")
+    Vs = [to_lv95(e["V"], tf) for e in catalog]
+    _status_glb_with_colors(Vs, [e["F"] for e in catalog], [e["guid"] for e in catalog],
+                            [e.get("color") for e in catalog], out)
+    return out
+
+
 def _status_lv95(V: np.ndarray, F: np.ndarray, xyz: np.ndarray, res: float, tol: float) -> dict:
     """Status eines Bauteils (Geometrie bereits LV95). 4 Zustaende inkl. nicht_erfasst.
 
