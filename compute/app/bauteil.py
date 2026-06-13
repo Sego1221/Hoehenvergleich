@@ -204,8 +204,52 @@ def load_model(mdir: str):
     return d["catalog"], d["transform"]
 
 
+_VERT_Z = 0.6   # Z-Ausdehnung >= 0.6 m -> vertikales Bauteil (Wand/Stuetze) -> Flaechendeckung
+
+
+def _status_surface(V: np.ndarray, F: np.ndarray, xyz: np.ndarray, res: float, tol: float) -> dict:
+    """Status eines VERTIKALEN Bauteils (Wand/Stuetze) ueber 3D-Flaechendeckung:
+    Oberflaeche abtasten, Anteil mit nahem Wolkenpunkt (<= ~tol) = Deckung."""
+    lo = V.min(axis=0); hi = V.max(axis=0)
+    m = ((xyz[:, 0] >= lo[0] - 0.3) & (xyz[:, 0] <= hi[0] + 0.3) &
+         (xyz[:, 1] >= lo[1] - 0.3) & (xyz[:, 1] <= hi[1] + 0.3) &
+         (xyz[:, 2] >= lo[2] - 0.3) & (xyz[:, 2] <= hi[2] + 0.3))
+    pts = xyz[m]
+    base = {"frac_gebaut": 0.0, "frac_nicht": 0.0, "frac_verdeckt": 0.0, "frac_unerfasst": 0.0,
+            "dz_mean": None, "n_points": int(pts.shape[0]),
+            "area_m2": round(float(np.sum([0.5 * np.linalg.norm(np.cross(V[b] - V[a], V[c] - V[a])) for a, b, c in F])), 2)}
+    if pts.shape[0] == 0:
+        return {**base, "status": "nicht_erfasst", "frac_unerfasst": 1.0}
+    # Wolke -> Voxelmenge (Kantenlaenge tol), um 6 Nachbarn dilatiert (Toleranz).
+    cv = np.unique(np.floor(pts / tol).astype(np.int64), axis=0)
+    occ = set(map(tuple, cv))
+    for ax in range(3):
+        for d in (-1, 1):
+            occ.update(map(tuple, cv + np.eye(3, dtype=np.int64)[ax] * d))
+    # Oberflaeche abtasten (deterministisch).
+    rng = np.random.default_rng(0); samples = []
+    for a, b, c in F:
+        A, B, C = V[a], V[b], V[c]
+        area = 0.5 * float(np.linalg.norm(np.cross(B - A, C - A)))
+        n = max(1, int(area / (res * res)))
+        u = rng.random(n); v = rng.random(n); ov = u + v > 1; u[ov] = 1 - u[ov]; v[ov] = 1 - v[ov]
+        samples.append(A + np.outer(u, B - A) + np.outer(v, C - A))
+    S = np.vstack(samples)
+    sv = np.floor(S / tol).astype(np.int64)
+    covered = sum(1 for r in sv if (int(r[0]), int(r[1]), int(r[2])) in occ)
+    cov = covered / len(sv) if len(sv) else 0.0
+    status = "gebaut" if cov >= 0.4 else "nicht_gebaut"
+    return {**base, "status": status, "frac_gebaut": round(float(cov), 3),
+            "frac_nicht": round(float(1 - cov), 3)}
+
+
 def _status_lv95(V: np.ndarray, F: np.ndarray, xyz: np.ndarray, res: float, tol: float) -> dict:
-    """Status eines Bauteils (Geometrie bereits LV95). 4 Zustaende inkl. nicht_erfasst."""
+    """Status eines Bauteils (Geometrie bereits LV95). 4 Zustaende inkl. nicht_erfasst.
+
+    Orientierung: flach (Z-Ausdehnung < _VERT_Z) -> Top-Raster + ΔZ (Slab);
+    vertikal -> 3D-Flaechendeckung (Wand/Stuetze)."""
+    if float(np.ptp(V[:, 2])) >= _VERT_Z:
+        return _status_surface(V, F, xyz, res, tol)
     x0, y0 = V[:, 0].min(), V[:, 1].min()
     x1, y1 = V[:, 0].max(), V[:, 1].max()
     nx = max(int(np.ceil((x1 - x0) / res)), 1); ny = max(int(np.ceil((y1 - y0) / res)), 1)
