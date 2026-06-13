@@ -25,6 +25,8 @@ export async function POST(req: NextRequest) {
   if (!name) {
     return NextResponse.json({ error: "Projektname fehlt." }, { status: 400 });
   }
+  const perimeter = Array.isArray(body?.perimeter) ? body.perimeter : null;
+  const perimeterParcels = Array.isArray(body?.perimeterParcels) ? body.perimeterParcels : null;
   const [row] = await db
     .insert(schema.projects)
     .values({
@@ -33,6 +35,8 @@ export async function POST(req: NextRequest) {
       adresse: body?.adresse ? String(body.adresse) : null,
       ort: body?.ort ? String(body.ort) : null,
       notes: body?.notes ? String(body.notes) : null,
+      perimeter,
+      perimeterParcels,
     })
     .returning();
   return NextResponse.json(row, { status: 201 });

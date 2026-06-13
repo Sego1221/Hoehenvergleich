@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog } from "@/components/ui";
 import { BP } from "@/lib/api";
+import { PerimeterEditor, type Parcel } from "@/components/PerimeterEditor";
 
 export function NewProject() {
   const [open, setOpen] = useState(false);
@@ -12,11 +13,18 @@ export function NewProject() {
   const [adresse, setAdresse] = useState("");
   const [ort, setOrt] = useState("");
   const [notes, setNotes] = useState("");
+  const [perimeter, setPerimeter] = useState<[number, number][][]>([]);
+  const [parcels, setParcels] = useState<Parcel[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const router = useRouter();
 
   const valid = projektNummer.trim() !== "" && name.trim() !== "";
+
+  function reset() {
+    setProjektNummer(""); setName(""); setAdresse(""); setOrt(""); setNotes("");
+    setPerimeter([]); setParcels([]);
+  }
 
   async function save() {
     setBusy(true); setErr(null);
@@ -24,11 +32,15 @@ export function NewProject() {
       const r = await fetch(`${BP}/api/projects`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ projektNummer, name, adresse, ort, notes }),
+        body: JSON.stringify({
+          projektNummer, name, adresse, ort, notes,
+          perimeter: perimeter.length ? perimeter : null,
+          perimeterParcels: parcels,
+        }),
       });
       if (!r.ok) throw new Error((await r.json()).error ?? "Fehler");
       setOpen(false);
-      setProjektNummer(""); setName(""); setAdresse(""); setOrt(""); setNotes("");
+      reset();
       router.refresh();
     } catch (e) {
       setErr((e as Error).message);
@@ -77,6 +89,14 @@ export function NewProject() {
           <div>
             <label>Notiz (optional)</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} autoComplete="off" />
+          </div>
+          <div>
+            <label>Bauperimeter (optional)</label>
+            <div className="small muted" style={{ marginBottom: 6 }}>
+              Aushubgrenze festlegen: Adresse suchen, dann Parzelle klicken, zeichnen oder DXF importieren.
+            </div>
+            <PerimeterEditor perimeter={perimeter} parcels={parcels}
+              onChange={(p, pc) => { setPerimeter(p); setParcels(pc); }} stacked mapHeight={300} />
           </div>
           {err && <div className="small" style={{ color: "var(--cut)" }}>{err}</div>}
         </div>

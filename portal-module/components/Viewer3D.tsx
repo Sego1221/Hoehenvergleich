@@ -1071,30 +1071,21 @@ export function Viewer3D({
 
           <div className="panel">
             <label className="small">Bauperimeter</label>
-            <div className="grid cols-2" style={{ marginTop: 8 }}>
-              <button className={perimeterMode === "parcel" ? "primary" : ""} onClick={() => setPMode("parcel")} disabled={!ready}>
-                Parzelle
-              </button>
-              <button className={perimeterMode === "draw" ? "primary" : ""} onClick={() => setPMode("draw")} disabled={!ready}>
-                Zeichnen
-              </button>
+            <div className="small muted" style={{ marginTop: 4 }}>
+              {perimeter.length > 0
+                ? `${perimeter.length} Fläche(n) — beim Projekt festgelegt.`
+                : "Kein Perimeter gesetzt (beim Projekt festlegen)."}
             </div>
-            {perimeterMode === "parcel" && (
-              <div className="small muted" style={{ marginTop: 6 }}>
-                Auf eine Parzelle klicken — Grenze kommt aus der amtlichen Vermessung.
-              </div>
-            )}
-            {perimeterMode === "draw" && (
-              <div className="small muted" style={{ marginTop: 6 }}>
-                Punkte klicken; Doppelklick schliesst die Fläche ({drawCount}).
-                {drawCount >= 3 && (
-                  <button style={{ marginTop: 6 }} onClick={closeDrawPolygon}>Fläche schliessen</button>
-                )}
-              </div>
-            )}
 
-            {/* DXF-Import (Aushubgrenze / Bereiche) */}
-            <div style={{ marginTop: 8 }}>
+            <label className="small" style={{ display: "block", marginTop: 10 }}>Wolke anzeigen</label>
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 6 }}>
+              <button className={cloudFilter === "all" ? "primary" : ""} onClick={() => setCloudFilter("all")}>alle</button>
+              <button className={cloudFilter === "inside" ? "primary" : ""} onClick={() => setCloudFilter("inside")} disabled={perimeter.length === 0}>innen</button>
+              <button className={cloudFilter === "outside" ? "primary" : ""} onClick={() => setCloudFilter("outside")} disabled={perimeter.length === 0}>aussen</button>
+            </div>
+
+            {/* DXF-Import: Teilbereiche (Cut/Fill) — Perimeter wird beim Projekt gesetzt. */}
+            <div style={{ marginTop: 10 }}>
               <input
                 ref={fileRef}
                 type="file"
@@ -1103,9 +1094,9 @@ export function Viewer3D({
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void importDxf(f); e.target.value = ""; }}
               />
               <button style={{ width: "100%" }} disabled={dxfBusy} onClick={() => fileRef.current?.click()}>
-                {dxfBusy ? "Lese DXF …" : "DXF importieren (Grenze/Bereiche)"}
+                {dxfBusy ? "Lese DXF …" : "DXF-Bereich importieren"}
               </button>
-              <div className="small muted" style={{ marginTop: 4 }}>DWG vorher im CAD nach DXF exportieren.</div>
+              <div className="small muted" style={{ marginTop: 4 }}>Polylinie als Teilbereich (Cut/Fill). DWG vorher zu DXF.</div>
             </div>
 
             {dxfList && (
@@ -1115,50 +1106,16 @@ export function Viewer3D({
                   <button style={{ padding: "2px 8px" }} onClick={() => setDxfList(null)}>schliessen</button>
                 </div>
                 {dxfList.map((pl, i) => (
-                  <div key={i} className="panel" style={{ padding: 8 }}>
-                    <div className="small" style={{ marginBottom: 4 }}>
-                      {pl.layer || "(ohne Layer)"} · {pl.area_m2.toLocaleString("de-CH")} m²
-                      {!pl.closed && <span className="muted"> · offen</span>}
-                      {!pl.looks_lv95 && <span style={{ color: "var(--danger,#d33)" }}> · nicht LV95?</span>}
-                    </div>
-                    <div className="grid cols-2">
-                      <button onClick={() => assignToPerimeter(pl)}>als Perimeter</button>
-                      <button onClick={() => void assignToRegion(pl)}>als Bereich</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {perimeter.length > 0 && (
-              <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
-                {parcels.map((pc, i) => (
                   <div key={i} className="spread small" style={{ alignItems: "center" }}>
                     <span>
-                      {pc.number === "manuell"
-                        ? `Fläche ${i + 1} (gezeichnet)`
-                        : `Parz. ${pc.number ?? "?"}${pc.ak ? " " + pc.ak : ""}`}
+                      {pl.layer || "(ohne Layer)"} · {pl.area_m2.toLocaleString("de-CH")} m²
+                      {!pl.looks_lv95 && <span style={{ color: "var(--danger,#d33)" }}> · nicht LV95?</span>}
                     </span>
-                    <button onClick={() => removeParcel(i)} title="Entfernen" style={{ padding: "2px 8px" }}>x</button>
+                    <button style={{ padding: "2px 8px" }} onClick={() => void assignToRegion(pl)}>als Bereich</button>
                   </div>
                 ))}
               </div>
             )}
-
-            <label className="small" style={{ display: "block", marginTop: 10 }}>Wolke anzeigen</label>
-            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 6 }}>
-              <button className={cloudFilter === "all" ? "primary" : ""} onClick={() => setCloudFilter("all")}>alle</button>
-              <button className={cloudFilter === "inside" ? "primary" : ""} onClick={() => setCloudFilter("inside")} disabled={perimeter.length === 0}>innen</button>
-              <button className={cloudFilter === "outside" ? "primary" : ""} onClick={() => setCloudFilter("outside")} disabled={perimeter.length === 0}>aussen</button>
-            </div>
-
-            <div className="grid cols-2" style={{ marginTop: 8 }}>
-              <button className="primary" disabled={!perimeterDirty || savingPerimeter} onClick={savePerimeter}>
-                {savingPerimeter ? "Speichert …" : "Speichern"}
-              </button>
-              <button disabled={perimeter.length === 0} onClick={clearPerimeter}>Alle löschen</button>
-            </div>
-            {perimeterDirty && <div className="small muted" style={{ marginTop: 6 }}>Ungespeicherte Änderung.</div>}
           </div>
 
           <div className="panel">

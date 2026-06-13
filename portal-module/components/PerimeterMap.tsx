@@ -25,6 +25,8 @@ type Props = {
   /** Karte auf diese LV95-Koordinate zentrieren (Adresssuche). Bei jeder neuen
    *  Referenz wird hingeflogen (auch identische Werte erneut moeglich). */
   focus?: { e: number; n: number } | null;
+  /** Kartenhoehe in px (Default 460). */
+  mapHeight?: number;
 };
 
 const RESOLUTIONS = [
@@ -162,7 +164,7 @@ export default function PerimeterMap(props: Props) {
 
   return (
     <div className="panel" style={{ padding: 0, overflow: "hidden", position: "relative" }}>
-      <div ref={ref} style={{ width: "100%", height: 460, cursor: props.mode === "view" ? "grab" : "crosshair" }} />
+      <div ref={ref} style={{ width: "100%", height: props.mapHeight ?? 460, cursor: props.mode === "view" ? "grab" : "crosshair" }} />
     </div>
   );
 }
