@@ -53,6 +53,55 @@ nur die Vergleichs-/Profil-/Volumen-/PDF-Aufrufe fehl (mit Toast-Meldung).
   `stats`), in `comparisons.route.ts` zusätzlich in `stats` mergen.
 - `statsForTol`, `profile`, `volume`, `protocol.pdf` wie im Client typisiert.
 
+## 3D-Viewer (Potree)
+
+Zusätzlich zur 2D-Karte gibt es eine 3D-Ansicht (Default-Tab) in
+`app/comparisons/[id]/view-client.tsx` (Tabs „3D-Viewer" / „2D-Karte").
+
+- **Datengrundlage**: Der Compute erzeugt pro Vergleich (job_id) per
+  `POST /jobs/{id}/build3d` einen Potree-2.0-Octree + Soll-GLB + `scene.json`
+  (idempotent, persistiert auf dem Compute-**Volume**). `build3d` läuft in
+  `app/api/projects/[id]/comparisons/route.ts` direkt NACH `compare()`, solange
+  die job_id noch im RAM-Cache des Compute liegt (try/catch — 3D ist optional,
+  Fehler nicht fatal; `octree_ready`/`points` werden geloggt).
+- **Proxy-Routen** (Browser lädt NICHT direkt vom internen Compute):
+  - `GET /api/comparisons/[id]/scene` → proxyt `scene.json` und schreibt
+    `cloudUrl`/`meshUrl` auf die App-eigenen Pfade um (inkl. basePath).
+  - `GET /api/comparisons/[id]/cloud/[...path]` → proxyt die Octree-Dateien.
+    **Range-Durchreichung**: der `range`-Request-Header wird an den Compute
+    weitergegeben, die 206-Antwort inkl. `Content-Range`/`Accept-Ranges`/
+    `Content-Length` 1:1 zurückgegeben, Body als Stream. Potree lädt
+    `octree.bin`/`hierarchy.bin` per Range — ohne das lädt nichts.
+  - `GET /api/comparisons/[id]/soll.glb` → proxyt das GLB (`model/gltf-binary`).
+- **Potree-Assets** (statisch, `public/potree/`): Potree ist eine globale
+  Script-Lib (`window.Potree`), kein npm-Modul → via `next/script`
+  (afterInteractive) geladen, NICHT importiert. Pfade absolut `/potree/...`
+  (next/script versieht sie mit dem basePath). `libs/` + `resources/` liegen
+  vollständig im Repo (auf die nötigen Libs getrimmt: three.js, GLTFLoader,
+  jquery, tween, proj4, BinaryHeap, plasio).
+  - **WICHTIG**: `build/potree/potree.js` + `potree.css` sind Build-Artefakte und
+    liegen NICHT im Potree-Git (`build/` dort `.gitignore`). Aktuell liegt nur ein
+    **Platzhalter** im Repo — der echte 1.8-Build muss einmal eingespielt werden
+    (siehe `public/potree/README.md`). Solange der Platzhalter aktiv ist, zeigt der
+    Viewer einen Hinweis statt zu crashen; der Next-Build bleibt grün.
+  - In `.gitignore` ist `build/` global ignoriert, `public/potree/build/**` aber
+    explizit re-included (`!`), damit die Assets mitkommen.
+  - Der Dockerfile-Runner kopiert `/app/public` → Assets sind im Container.
+- **Viewer-Funktionen** (`components/Viewer3D.tsx`, nur clientseitig,
+  `dynamic ssr:false`):
+  - Octree via Proxy-`cloudUrl` (`Potree.loadPointCloud(.../cloud/metadata.json)`),
+  - Einfärbung nach Skalarfeld `deviation` (Gradient); RGB-Umschalter falls
+    `rgb_baked`,
+  - Soll-GLB halbtransparent in `viewer.scene.scene` (GLTFLoader; Offset bereits
+    serverseitig drin → NICHT nochmal verschieben),
+  - Toleranz-Slider setzt das Farbfenster live auf ±tol,
+  - Schnitt/Profil über Potrees `profileTool`,
+  - Grundriss-Umschalter (`setCameraMode(ORTHOGRAPHIC)` + Top-Ansicht),
+  - `pointBudget` 1.5 Mio + EDL für Performance.
+- **Volume nötig**: Die 3D-Artefakte liegen persistent auf dem Compute-Volume.
+  Ohne Volume gehen sie nach RAM-Cache-Ablauf verloren → 3D-Tab zeigt dann
+  „keine 3D-Datengrundlage" (404 auf scene).
+
 ## Karten-/Geo-Annahmen
 
 - CRS EPSG:2056 via `proj4leaflet` (`L.Proj.CRS`) mit Swisstopo-LV95-Resolutions

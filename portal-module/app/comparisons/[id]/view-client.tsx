@@ -15,6 +15,10 @@ import { BP } from "@/lib/api";
 
 // Karte nur clientseitig (Leaflet kennt window/document).
 const HoehenMap = dynamicImport(() => import("@/components/HoehenMap"), { ssr: false });
+// 3D-Viewer (Three.js) ebenfalls nur clientseitig.
+const Viewer3D = dynamicImport(() => import("@/components/Viewer3D"), { ssr: false });
+
+type Tab = "3d" | "2d";
 
 type Mode = "view" | "line" | "polygon";
 
@@ -31,6 +35,7 @@ export function CompareView({
 }) {
   const toast = useToast();
   const router = useRouter();
+  const [tab, setTab] = useState<Tab>("3d");
   const [tol, setTol] = useState<number>(params?.tol ?? 0.05);
   const [live, setLive] = useState<Stats | null>(stats as unknown as Stats | null);
   const [mode, setMode] = useState<Mode>("view");
@@ -135,6 +140,23 @@ export function CompareView({
   }, [stats]);
 
   return (
+    <div className="grid" style={{ gap: 14 }}>
+      {/* Tab-Umschalter: 3D-Viewer (Default) vs. 2D-Karte */}
+      <div className="row" style={{ gap: 6 }}>
+        <button className={tab === "3d" ? "primary" : ""} onClick={() => setTab("3d")}>3D-Viewer</button>
+        <button className={tab === "2d" ? "primary" : ""} onClick={() => setTab("2d")}>2D-Karte</button>
+      </div>
+
+      {tab === "3d" ? (
+        <Viewer3D comparisonId={comparisonId} tol={tol} />
+      ) : (
+        Map2D()
+      )}
+    </div>
+  );
+
+  function Map2D() {
+   return (
     <div className="grid" style={{ gap: 14, gridTemplateColumns: "1fr 340px", alignItems: "start" }}>
       {/* Linke Spalte: Karte + Profil */}
       <div className="grid" style={{ gap: 14 }}>
@@ -226,5 +248,6 @@ export function CompareView({
         <button className="primary" disabled={!!busy} onClick={downloadPdf}>PDF-Protokoll</button>
       </div>
     </div>
-  );
+   );
+  }
 }

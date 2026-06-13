@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { compare, type Transform } from "@/lib/computeClient";
+import { compare, build3d, type Transform } from "@/lib/computeClient";
 import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -79,6 +79,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       { error: `Compute-Service-Fehler: ${(e as Error).message}` },
       { status: 502 },
     );
+  }
+
+  // 3D-Datengrundlage (Octree + GLB + scene.json) erzeugen, SOLANGE die job_id
+  // noch im RAM-Cache des Compute liegt. 3D ist optional -> Fehler nicht fatal.
+  try {
+    const scene = await build3d(result.job_id);
+    console.log(`[hoehenvergleich] build3d job=${result.job_id} octree_ready=${scene.octree_ready} points=${scene.points}`);
+  } catch (e) {
+    console.warn(`[hoehenvergleich] build3d fehlgeschlagen (3D optional) job=${result.job_id}: ${(e as Error).message}`);
   }
 
   const sollKind = /\.ifc$/i.test(soll.name) ? "ifc" : "mesh";

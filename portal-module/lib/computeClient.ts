@@ -77,6 +77,55 @@ export async function protocolPdf(jobId: string, ctx: Record<string, unknown>): 
 export const geotiffUrl = (jobId: string) => `${BASE}/jobs/${jobId}/dz.tif`;
 export const previewPngUrl = (jobId: string, tol = 0.05) => `${BASE}/jobs/${jobId}/dz.png?tol=${tol}`;
 
+// ---------------------------------------------------------------------------
+// 3D-Datengrundlage (Three-Punktwolke cloud.bin + Soll-GLB + scene.json)
+// ---------------------------------------------------------------------------
+
+export type Scene = {
+  offset: [number, number, number];
+  crs: string;                       // "EPSG:2056"
+  binUrl: string;                    // "/jobs/{jobId}/cloud.bin" (Three-Punktwolke)
+  binCount: number;                  // Anzahl Punkte in cloud.bin
+  meshUrl: string;                   // "/jobs/{jobId}/soll.glb"
+  cloudUrl?: string;                 // (legacy/optional) Octree-Metadata
+  bbox: { min: [number, number, number]; max: [number, number, number] };
+  deviation: {
+    min: number; max: number; median: number;
+    clip: number | null;
+    field?: string; rgb_baked?: boolean;
+  };
+  points: number;
+  mesh?: { vertices: number; faces: number };
+  octree_ready?: boolean;
+};
+
+export type Build3dOpts = { bake_rgb?: boolean; clip?: number; force?: boolean };
+
+/**
+ * Octree + GLB + scene.json erzeugen (idempotent, persistiert auf Compute-Volume).
+ * MUSS direkt nach compare() laufen, solange die job_id noch im RAM-Cache ist.
+ */
+export function build3d(jobId: string, opts: Build3dOpts = {}): Promise<Scene> {
+  return req<Scene>(`/jobs/${jobId}/build3d`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+}
+
+/** scene.json eines bereits gebauten Jobs (vom Volume). */
+export function scene(jobId: string): Promise<Scene> {
+  return req<Scene>(`/jobs/${jobId}/scene.json`);
+}
+
+// Serverseitige Compute-URLs (NICHT für den Browser; der lädt über die Proxy-Routen).
+export const sceneUrl = (jobId: string) => `${BASE}/jobs/${jobId}/scene.json`;
+export const cloudBaseUrl = (jobId: string) => `${BASE}/jobs/${jobId}/cloud`;
+export const cloudUrl = (jobId: string, path: string) =>
+  `${BASE}/jobs/${jobId}/cloud/${path.replace(/^\/+/, "")}`;
+export const glbUrl = (jobId: string) => `${BASE}/jobs/${jobId}/soll.glb`;
+export const cloudBinUrl = (jobId: string) => `${BASE}/jobs/${jobId}/cloud.bin`;
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, init);
   if (!r.ok) throw new Error(`Compute ${r.status}: ${await r.text()}`);
