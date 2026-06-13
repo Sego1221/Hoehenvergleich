@@ -146,11 +146,13 @@ function NewComparisonDialog({
         <div className="grid cols-2">
           <div>
             <label>Soll (IFC / TIN)</label>
-            <input type="file" accept=".ifc,.obj,.ply,.stl,.xml,.land,.tin" onChange={(e) => setSoll(e.target.files?.[0] ?? null)} />
+            {/* Kein accept-Filter: iOS Safari graut .ifc/.laz/.tif sonst aus (kein
+                bekannter UTI). Validierung erfolgt client- und serverseitig nach Endung. */}
+            <input type="file" onChange={(e) => setSoll(e.target.files?.[0] ?? null)} />
           </div>
           <div>
             <label>Ist (LAZ / LAS / DSM-GeoTIFF)</label>
-            <input type="file" accept=".laz,.las,.tif,.tiff,.asc" onChange={(e) => setIst(e.target.files?.[0] ?? null)} />
+            <input type="file" onChange={(e) => setIst(e.target.files?.[0] ?? null)} />
           </div>
         </div>
         <div className="grid cols-3">
