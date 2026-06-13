@@ -21,7 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { useToast } from "@/components/ui";
+import { useToast, Slider } from "@/components/ui";
 import { ProfileChart } from "@/components/ProfileChart";
 import { BP } from "@/lib/api";
 import type { Profile, Scene } from "@/lib/computeClient";
@@ -57,6 +57,8 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   const [cutMode, setCutMode] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pointSize, setPointSize] = useState(0.5);
+  const pointSizeRef = useRef(0.5);
   const viewModeRef = useRef<ViewMode>("3d");
   const cutModeRef = useRef(false);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
@@ -229,7 +231,7 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
     geom.computeBoundingSphere();
 
     const mat = new THREE.PointsMaterial({
-      size: 1.0,
+      size: pointSizeRef.current,
       sizeAttenuation: true,
       vertexColors: true,
     });
@@ -321,6 +323,13 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
   useEffect(() => {
     if (meshRef.current) meshRef.current.visible = meshVisible;
   }, [meshVisible]);
+
+  // ---------------------------------------------- Punktgrösse (live) ---------
+  useEffect(() => {
+    pointSizeRef.current = pointSize;
+    const m = pointsRef.current?.material as THREE.PointsMaterial | undefined;
+    if (m) { m.size = pointSize; m.needsUpdate = true; }
+  }, [pointSize]);
 
   // ------------------------------------------------ Schnitt: Punkt picken ----
   // Raycast gegen Punkte/Mesh; Fallback auf horizontale Ebene z = bbox-Mitte.
@@ -522,6 +531,13 @@ export function Viewer3D({ comparisonId, tol = 0.05 }: { comparisonId: string; t
               </button>
             </div>
             <div className="small muted" style={{ marginTop: 6 }}>Halbtransparent über der Ist-Wolke.</div>
+          </div>
+
+          <div className="panel">
+            <label className="small">Punktgrösse: {pointSize.toFixed(2)} m</label>
+            <div style={{ marginTop: 8 }}>
+              <Slider value={pointSize} min={0.05} max={3} step={0.05} onChange={setPointSize} />
+            </div>
           </div>
 
           <div className="panel">
