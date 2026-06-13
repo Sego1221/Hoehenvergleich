@@ -129,6 +129,10 @@ tr:hover td { background: var(--surface-2); }
 .leaflet-container { background: #eef2f6; }
 /* Baustellen-Marker (divIcon): Leaflet-Standardbox (weiss/Rand) entfernen. */
 .leaflet-div-icon.bm-site-pin { background: transparent; border: 0; }
+/* Vollbild-Karte (Projektuebersicht): Content-Padding + Breitenlimit aufheben,
+   damit die Karte randlos neben der Sidebar steht. Wird nur auf der Kartenseite
+   gesetzt (Body-Klasse via ProjectsMap). */
+body.hv-map-full .content { padding: 0; max-width: none; overflow: hidden; }
 
 /* ============================================================
    Kanonische Birchmeier-App-Sidebar (HELLES Theme)

@@ -42,14 +42,8 @@ export default async function HomePage() {
     );
   }
 
-  // Karte fuellt den Bereich (waechst, wenn die Sidebar eingeklappt wird).
-  // Projektauswahl ueber das Suchfeld/Dropdown in der Karte (ersetzt die Liste).
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, height: "calc(100vh - 76px)" }}>
-      <h2 style={{ margin: 0 }}>Projekte</h2>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <ProjectsMap projects={pins} height="100%" />
-      </div>
-    </div>
-  );
+  // Vollbild-Karte randlos neben der Sidebar (ProjectsMap setzt body.hv-map-full,
+  // wodurch das Content-Padding/Breitenlimit entfaellt). Projektauswahl ueber das
+  // Suchfeld/Dropdown in der Karte.
+  return <ProjectsMap projects={pins} height="100vh" />;
 }

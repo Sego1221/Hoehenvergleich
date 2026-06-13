@@ -52,6 +52,12 @@ export default function ProjectsMap({
       .slice(0, 12);
   }, [q, projects]);
 
+  // Vollbild: Content-Padding/Breitenlimit nur auf dieser Seite aufheben.
+  useEffect(() => {
+    document.body.classList.add("hv-map-full");
+    return () => document.body.classList.remove("hv-map-full");
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let ro: ResizeObserver | null = null;
@@ -101,7 +107,7 @@ export default function ProjectsMap({
   }, []);
 
   return (
-    <div className="panel" style={{ padding: 0, overflow: "hidden", position: "relative", height }}>
+    <div style={{ position: "relative", height, width: "100%", overflow: "hidden", background: "#eef2f6" }}>
       <div ref={ref} style={{ width: "100%", height: "100%", cursor: "grab" }} />
 
       {/* Suchfeld + Dropdown (oben links, ueber der Karte) */}
