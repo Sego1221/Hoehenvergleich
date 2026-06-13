@@ -145,6 +145,8 @@ export function Viewer3D({
   const [busy, setBusy] = useState(false);
   const [pointSize, setPointSize] = useState(0.5);
   const pointSizeRef = useRef(0.5);
+  const [density, setDensity] = useState(1);   // Anzeigedichte 0..1 (clientseitig)
+  const densityRef = useRef(1);
   const [colorMode, setColorMode] = useState<ColorMode>("dz");
   const [dzMin, setDzMin] = useState(-0.3); // Untergrenze (zu tief)
   const [dzMax, setDzMax] = useState(0.3);  // Obergrenze (zu hoch)
@@ -679,24 +681,32 @@ export function Viewer3D({
     return { polys, bboxes };
   }
 
-  // Wolke nach Perimeter aufteilen: alle / nur innen / nur aussen (Index-Buffer).
+  // Sichtbare Punkte bestimmen: Anzeigedichte (Stride) UND Perimeter-Aufteilung
+  // (alle / nur innen / nur aussen) in EINEM Index-Buffer kombiniert.
   function applyCloudFilter() {
     const pts = pointsRef.current;
     const pos = posRef.current;
     if (!pts || !pos) return;
-    const filter = cloudFilterRef.current;
     const geom = pts.geometry as THREE.BufferGeometry;
+    const filter = cloudFilterRef.current;
     const built = buildLocalPolys();
-    if (filter === "all" || !built) {
+    const usePerim = !(filter === "all" || !built);
+    const dens = densityRef.current;
+    const stride = dens >= 1 ? 1 : Math.max(1, Math.round(1 / dens));
+    // Nichts einzuschränken -> alle Punkte (kein Index).
+    if (!usePerim && stride === 1) {
       geom.setIndex(null);
       return;
     }
     const want = filter === "inside";
     const count = cloudCountRef.current;
     const idx: number[] = [];
-    for (let i = 0; i < count; i++) {
-      const inside = pointInPolys(pos[i * 3], pos[i * 3 + 1], built.polys, built.bboxes);
-      if (inside === want) idx.push(i);
+    for (let i = 0; i < count; i += stride) {
+      if (usePerim) {
+        const inside = pointInPolys(pos[i * 3], pos[i * 3 + 1], built!.polys, built!.bboxes);
+        if (inside !== want) continue;
+      }
+      idx.push(i);
     }
     geom.setIndex(idx);
   }
@@ -889,11 +899,12 @@ export function Viewer3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perimeter, ready]);
 
-  // Wolken-Aufteilung neu anwenden.
+  // Wolken-Aufteilung / Anzeigedichte neu anwenden.
   useEffect(() => {
+    densityRef.current = density;
     if (ready) applyCloudFilter();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cloudFilter, ready]);
+  }, [cloudFilter, density, ready]);
 
   // ---------------------------------------------------------- Dispose --------
   function disposePoints() {
@@ -1154,6 +1165,15 @@ export function Viewer3D({
             <label className="small">Punktgrösse: {pointSize.toFixed(2)} m</label>
             <div style={{ marginTop: 8 }}>
               <Slider value={pointSize} min={0.01} max={3} step={0.01} onChange={setPointSize} />
+            </div>
+            <label className="small" style={{ display: "block", marginTop: 10 }}>
+              Anzeigedichte: {(density * 100).toFixed(0)} %
+            </label>
+            <div style={{ marginTop: 8 }}>
+              <Slider value={density} min={0.02} max={1} step={0.02} onChange={setDensity} />
+            </div>
+            <div className="small muted" style={{ marginTop: 6 }}>
+              Dünnt nur die Anzeige aus (Performance) — Berechnung nutzt immer alle Punkte.
             </div>
           </div>
 
