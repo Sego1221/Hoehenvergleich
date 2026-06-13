@@ -127,6 +127,8 @@ tr:hover td { background: var(--surface-2); }
 .content { padding: 18px 22px; max-width: 1500px; height: 100vh; overflow-y: auto; }
 
 .leaflet-container { background: #eef2f6; }
+/* Baustellen-Marker (divIcon): Leaflet-Standardbox (weiss/Rand) entfernen. */
+.leaflet-div-icon.bm-site-pin { background: transparent; border: 0; }
 
 /* ============================================================
    Kanonische Birchmeier-App-Sidebar (HELLES Theme)

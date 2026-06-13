@@ -9,7 +9,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import "leaflet/dist/leaflet.css";
-import { dissolvePerimeter } from "@/lib/geom";
+
+// Baustellen-Marker (Schutzhelm) als HTML/SVG fuer L.divIcon.
+const SITE_ICON_HTML =
+  '<div style="width:30px;height:30px;border-radius:50%;background:#20683D;' +
+  'border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4);display:flex;' +
+  'align-items:center;justify-content:center">' +
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="#fff">' +
+  '<path d="M3 18h18v2H3z"/><path d="M6.5 17v-3.2a5.5 5.5 0 0 1 11 0V17z"/>' +
+  '<path d="M11 5.2h2V8h-2z"/></svg></div>';
 
 export type ProjectPin = {
   id: string;
@@ -66,20 +74,16 @@ export default function ProjectsMap({
         { attribution: "Tiles © Esri", maxNativeZoom: 19, maxZoom: 21 } as any,
       ).addTo(map);
 
+      const siteIcon = L.divIcon({ html: SITE_ICON_HTML, className: "bm-site-pin", iconSize: [30, 30], iconAnchor: [15, 15] });
       const pinned = projects.filter((p) => p.point);
       const latlngs: any[] = [];
       for (const p of pinned) {
         const [e, n] = p.point as [number, number];
         const ll = enToLatLng(e, n);
         latlngs.push(ll);
-        if (p.perimeter?.length) {
-          for (const poly of dissolvePerimeter(p.perimeter)) {
-            const rings = poly.map((ring) => ring.map(([E, N]) => enToLatLng(E, N)));
-            L.polygon(rings as any, { color: "#ff00ff", weight: 1.5, fillOpacity: 0.08 }).addTo(map);
-          }
-        }
-        const marker = L.circleMarker(ll, { radius: 8, color: "#fff", weight: 2, fillColor: "#20683D", fillOpacity: 1 }).addTo(map);
-        marker.bindTooltip(`${p.name}${p.ort ? " · " + p.ort : ""}`, { direction: "top", offset: [0, -6] });
+        // Nur ein Baustellen-Icon (keine Umrandungslinie) in der Uebersicht.
+        const marker = L.marker(ll, { icon: siteIcon }).addTo(map);
+        marker.bindTooltip(`${p.name}${p.ort ? " · " + p.ort : ""}`, { direction: "top", offset: [0, -10] });
         marker.on("click", () => router.push(`/projects/${p.id}`));
       }
 
