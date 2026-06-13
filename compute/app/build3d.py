@@ -1,0 +1,238 @@
+# -*- coding: utf-8 -*-
+"""3D-Datengrundlage für den Potree-Viewer.
+
+Pro Vergleich (job_id) wird erzeugt:
+  - eine LAS/LAZ-Punktwolke mit ExtraBytes-Skalarfeld "deviation" (ΔZ in m),
+    optional RGB nach ΔZ-Rampe vorgebacken,
+  - daraus ein Potree-2.0-Octree (metadata.json/hierarchy.bin/octree.bin) via PotreeConverter,
+  - das Soll-IFC als GLB (trimesh), um denselben Offset verschoben wie die Wolke,
+  - eine scene.json { offset, cloudUrl, meshUrl, bbox } für den Viewer.
+
+Alle Artefakte liegen unter <DATA>/octrees/<job_id>/ auf dem Railway-Volume
+(Fallback: System-Tempdir, falls kein Volume gemountet ist). Der Schritt ist
+idempotent: existiert scene.json bereits, wird sie nur gelesen.
+
+Präzision: LV95-Koordinaten (~2.6 Mio) sprengen float32. Cloud UND Mesh werden
+um denselben Offset (Floor der gemeinsamen Min-Ecke) verschoben; der Viewer
+addiert den Offset wieder hinzu. So bleiben Wolke und Mesh deckungsgleich.
+"""
+from __future__ import annotations
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+
+import numpy as np
+
+from . import engine
+
+
+# ----------------------------- Pfade / Volume -----------------------------
+def data_root() -> str:
+    """Wurzel für persistente Artefakte. Railway-Volume bevorzugt, sonst Tempdir.
+
+    WICHTIG: NICHT /srv oder /app (überdeckt Code). Default /data.
+    """
+    root = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or "/data"
+    try:
+        os.makedirs(root, exist_ok=True)
+        # Schreibtest: kein Volume gemountet -> Fallback auf Tempdir.
+        probe = os.path.join(root, ".writetest")
+        with open(probe, "w") as fh:
+            fh.write("ok")
+        os.remove(probe)
+    except OSError:
+        root = os.path.join(tempfile.gettempdir(), "hv_data")
+        os.makedirs(root, exist_ok=True)
+    return root
+
+
+def job_dir(job_id: str) -> str:
+    d = os.path.join(data_root(), "octrees", job_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+# ----------------------------- ΔZ-Farbrampe -----------------------------
+def _deviation_rgb(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
+    """ΔZ -> RGB (uint16, 0..65535) per RdYlBu_r-ähnlicher Rampe. NaN -> grau."""
+    import matplotlib as mpl
+    import matplotlib.colors as mcolors
+    norm = mcolors.Normalize(vmin=-clip, vmax=clip, clip=True)
+    rgba = mpl.colormaps["RdYlBu_r"](norm(np.nan_to_num(dev, nan=0.0)))
+    rgb = (rgba[:, :3] * 65535.0).astype(np.uint16)
+    rgb[~np.isfinite(dev)] = 32768  # aussen/keine Soll-Fläche -> neutralgrau
+    return rgb
+
+
+# ----------------------------- LAS-Export mit deviation -----------------------------
+def export_las_with_deviation(result: engine.Result, out_las: str,
+                              bake_rgb: bool = True, clip: float = 0.30) -> dict:
+    """Ist-Wolke (+ deviation-ExtraBytes) als LAS schreiben. Rückgabe: Statistik.
+
+    Liest die Original-Punkte (+RGB) frisch aus der Quell-LAZ und georeferenziert
+    sie wie im Vergleich. ΔZ pro Punkt via engine.point_deviations.
+    """
+    import laspy
+    cloud_path = result.meta.get("cloud_path")
+    if not cloud_path or not os.path.exists(cloud_path):
+        raise ValueError("Quell-Punktwolke nicht verfügbar (cloud_path fehlt).")
+
+    xyz, rgb = engine.load_cloud(cloud_path)
+    from . import georef
+    xyz, _ = georef.georeference(xyz, result.meta.get("cloud_transform"))
+
+    dev = engine.point_deviations(result, xyz).astype(np.float32)
+
+    header = laspy.LasHeader(point_format=3, version="1.4")
+    header.offsets = np.floor(xyz.min(axis=0))
+    header.scales = np.array([0.001, 0.001, 0.001])
+    header.add_extra_dim(laspy.ExtraBytesParams(
+        name="deviation", type=np.float32,
+        description="dZ Punkt minus Soll [m]"))
+
+    las = laspy.LasData(header)
+    las.x, las.y, las.z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    las.deviation = dev
+    if bake_rgb:
+        col = _deviation_rgb(dev, clip)
+        las.red, las.green, las.blue = col[:, 0], col[:, 1], col[:, 2]
+    elif rgb is not None:
+        # Original-RGB kann 8- oder 16-bit sein -> auf 16-bit skalieren.
+        r = rgb.astype(np.float64)
+        if r.max() <= 255:
+            r = r / 255.0 * 65535.0
+        las.red, las.green, las.blue = (r[:, 0].astype(np.uint16),
+                                        r[:, 1].astype(np.uint16),
+                                        r[:, 2].astype(np.uint16))
+    las.write(out_las)
+
+    finite = dev[np.isfinite(dev)]
+    return {
+        "points": int(xyz.shape[0]),
+        "offset": header.offsets.tolist(),
+        "deviation_min": float(finite.min()) if finite.size else None,
+        "deviation_max": float(finite.max()) if finite.size else None,
+        "deviation_median": float(np.median(finite)) if finite.size else None,
+        "nan_points": int((~np.isfinite(dev)).sum()),
+        "bbox_min": xyz.min(axis=0).tolist(),
+        "bbox_max": xyz.max(axis=0).tolist(),
+    }
+
+
+# ----------------------------- GLB-Export Soll -----------------------------
+def export_soll_glb(result: engine.Result, out_glb: str, offset: np.ndarray) -> dict:
+    """Soll-Mesh als GLB exportieren, um denselben Offset verschoben wie die Wolke."""
+    import trimesh
+    V, F = engine.soll_mesh_lv95(result)
+    Vc = np.asarray(V, dtype=np.float64) - np.asarray(offset, dtype=np.float64)
+    mesh = trimesh.Trimesh(vertices=Vc.astype(np.float32), faces=F, process=False)
+    mesh.export(out_glb, file_type="glb")
+    return {
+        "vertices": int(V.shape[0]),
+        "faces": int(F.shape[0]),
+        "bytes": int(os.path.getsize(out_glb)),
+        "bbox_min": V.min(axis=0).tolist(),
+        "bbox_max": V.max(axis=0).tolist(),
+    }
+
+
+# ----------------------------- PotreeConverter -----------------------------
+def potree_binary() -> str:
+    """Pfad zum PotreeConverter-Binary (Env HV_POTREE_BIN, sonst PATH-Lookup)."""
+    cand = os.environ.get("HV_POTREE_BIN")
+    if cand and os.path.exists(cand):
+        return cand
+    found = shutil.which("PotreeConverter")
+    if found:
+        return found
+    for p in ("/opt/potree/PotreeConverter", "/usr/local/bin/PotreeConverter"):
+        if os.path.exists(p):
+            return p
+    raise FileNotFoundError("PotreeConverter-Binary nicht gefunden (HV_POTREE_BIN setzen).")
+
+
+def run_potree(in_las: str, out_dir: str) -> dict:
+    """LAS -> Potree-2.0-Octree in out_dir/cloud. Rückgabe: metadata-Auszug."""
+    cloud_dir = os.path.join(out_dir, "cloud")
+    if os.path.isdir(cloud_dir):
+        shutil.rmtree(cloud_dir)
+    cmd = [potree_binary(), in_las, "-o", cloud_dir, "--overwrite"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"PotreeConverter fehlgeschlagen (code {proc.returncode}): "
+            f"{proc.stderr[-500:] or proc.stdout[-500:]}")
+    meta_path = os.path.join(cloud_dir, "metadata.json")
+    with open(meta_path, "r", encoding="utf-8") as fh:
+        meta = json.load(fh)
+    return {"metadata": meta, "cloud_dir": cloud_dir}
+
+
+# ----------------------------- Orchestrator -----------------------------
+def build(result: engine.Result, job_id: str, *, bake_rgb: bool = True,
+          clip: float = 0.30, force: bool = False) -> dict:
+    """Octree + GLB + scene.json erzeugen (idempotent, cached auf Volume)."""
+    jd = job_dir(job_id)
+    scene_path = os.path.join(jd, "scene.json")
+    if os.path.exists(scene_path) and not force:
+        with open(scene_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+
+    # 1) LAS mit deviation. Offset = Floor der Wolken-Min-Ecke (gemeinsamer Bezug).
+    las_path = os.path.join(jd, "cloud.las")
+    las_info = export_las_with_deviation(result, las_path, bake_rgb=bake_rgb, clip=clip)
+    offset = np.asarray(las_info["offset"], dtype=np.float64)
+
+    # 2) Soll-GLB um denselben Offset verschoben.
+    glb_path = os.path.join(jd, "soll.glb")
+    glb_info = export_soll_glb(result, glb_path, offset)
+
+    # 3) Potree-Octree (kann lokal ohne Binary fehlschlagen -> dann weich melden).
+    potree_info, potree_err = None, None
+    try:
+        potree_info = run_potree(las_path, jd)
+    except (FileNotFoundError, RuntimeError) as e:
+        potree_err = str(e)
+
+    # Gemeinsame BBox (LV95) aus Wolke + Mesh.
+    bmin = np.minimum(las_info["bbox_min"], glb_info["bbox_min"]).tolist()
+    bmax = np.maximum(las_info["bbox_max"], glb_info["bbox_max"]).tolist()
+
+    scene = {
+        "job_id": job_id,
+        "offset": offset.tolist(),          # vom Viewer wieder zu addieren
+        "crs": "EPSG:2056",                 # LV95
+        "cloudUrl": f"/jobs/{job_id}/cloud/metadata.json",
+        "meshUrl": f"/jobs/{job_id}/soll.glb",
+        "bbox": {"min": bmin, "max": bmax},
+        "deviation": {
+            "min": las_info["deviation_min"],
+            "max": las_info["deviation_max"],
+            "median": las_info["deviation_median"],
+            "field": "deviation",
+            "rgb_baked": bool(bake_rgb),
+            "clip": clip,
+        },
+        "points": las_info["points"],
+        "nan_points": las_info["nan_points"],
+        "mesh": {"vertices": glb_info["vertices"], "faces": glb_info["faces"],
+                 "bytes": glb_info["bytes"]},
+        "octree_ready": potree_info is not None,
+    }
+    if potree_err:
+        scene["octree_error"] = potree_err
+
+    with open(scene_path, "w", encoding="utf-8") as fh:
+        json.dump(scene, fh, ensure_ascii=False, indent=2)
+    return scene
+
+
+def cloud_file(job_id: str, rel_path: str) -> str:
+    """Absoluter Pfad einer Octree-Datei unter <job>/cloud/, mit Traversal-Schutz."""
+    base = os.path.join(job_dir(job_id), "cloud")
+    full = os.path.normpath(os.path.join(base, rel_path))
+    if not full.startswith(os.path.normpath(base) + os.sep) and full != os.path.normpath(base):
+        raise ValueError("Ungültiger Pfad.")
+    return full

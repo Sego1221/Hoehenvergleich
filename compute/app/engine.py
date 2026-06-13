@@ -199,7 +199,10 @@ def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
     dz = ist - soll
     valid = np.isfinite(dz) & (np.abs(dz) <= cap)
     meta = {"res": res, "ground_pct": ground_pct, "exg_thr": exg_thr, "use_veg": use_veg,
-            "cap": cap, "soll_georef": ginfo, "cloud_georef": cinfo, **dinfo}
+            "cap": cap, "soll_georef": ginfo, "cloud_georef": cinfo,
+            # Quell-Pfade für die spätere 3D-Datengrundlage (Octree/GLB) merken.
+            "soll_path": ifc_path, "cloud_path": cloud_path,
+            "cloud_transform": transform, **dinfo}
     return Result(grid, soll, ist, dz, valid, meta)
 
 
@@ -306,3 +309,44 @@ def sample_profile(result: Result, line, step=None):
 
 def _nan2none(a):
     return [None if not np.isfinite(v) else round(float(v), 4) for v in a]
+
+
+# ----------------------------- 3D-Datengrundlage (Potree-Viewer) -----------------------------
+def point_deviations(result: Result, xyz: np.ndarray) -> np.ndarray:
+    """Per-Punkt-ΔZ = Punkt.z − Soll-Oberfläche(x,y), bilinear gegen das Soll-DSM.
+
+    VEKTORISIERT (für Millionen Punkte). Punkte ohne Soll-Fläche (ausserhalb/Lücke
+    oder NaN-Zelle) -> NaN. xyz in LV95. Rückgabe: (N,) float64 ΔZ in Metern.
+    """
+    xyz = np.asarray(xyz, dtype=np.float64)
+    g = result.grid
+    arr = result.soll_z
+    fx = (xyz[:, 0] - g.x0) / g.res - 0.5
+    fy = (xyz[:, 1] - g.y0) / g.res - 0.5
+    x0 = np.floor(fx).astype(np.int64)
+    y0 = np.floor(fy).astype(np.int64)
+    tx = fx - x0
+    ty = fy - y0
+    soll = np.full(xyz.shape[0], np.nan)
+    ok = (x0 >= 0) & (y0 >= 0) & (x0 + 1 < g.nx) & (y0 + 1 < g.ny)
+    xi = x0[ok]; yi = y0[ok]; txi = tx[ok]; tyi = ty[ok]
+    q00 = arr[yi, xi]; q01 = arr[yi, xi + 1]
+    q10 = arr[yi + 1, xi]; q11 = arr[yi + 1, xi + 1]
+    a = q00 * (1 - txi) + q01 * txi
+    b = q10 * (1 - txi) + q11 * txi
+    soll[ok] = a * (1 - tyi) + b * tyi   # NaN in einer Ecke -> NaN (keine Soll-Fläche)
+    return xyz[:, 2] - soll
+
+
+def soll_mesh_lv95(result: Result):
+    """Soll-Mesh (V,F) in LV95 rekonstruieren — aus den im Result-Meta hinterlegten Pfaden.
+
+    Wird vom GLB-Export gebraucht. Liefert georeferenzierte Vertices.
+    """
+    src = result.meta.get("soll_path")
+    if not src:
+        raise ValueError("Kein 'soll_path' im Result-Meta — Mesh kann nicht rekonstruiert werden.")
+    V, F = load_soll(src)
+    tf = result.meta.get("soll_georef", {}).get("transform")
+    Vg, _ = georef.georeference(V, tf)
+    return Vg, F

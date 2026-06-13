@@ -13,9 +13,20 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import engine, pdf
+from . import engine, pdf, build3d
 
 app = FastAPI(title="Höhenvergleich Compute", version="0.1.0")
+
+# CORS: i.d.R. gleich-origin über das Gateway. Erlaubte Origins per Env
+# HV_CORS_ORIGINS (kommagetrennt) überschreibbar; Default = same-origin (leer).
+# Range-Header (Potree) müssen exponiert sein.
+from fastapi.middleware.cors import CORSMiddleware
+_cors = [o.strip() for o in os.environ.get("HV_CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors:
+    app.add_middleware(
+        CORSMiddleware, allow_origins=_cors, allow_methods=["GET", "POST"],
+        allow_headers=["*"], expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
+    )
 
 # Statische Demo-Oberfläche (app/static/index.html) unter "/" ausliefern.
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -31,10 +42,31 @@ def index():
 _RESULTS: dict[str, engine.Result] = {}
 _MAX_JOBS = 32
 
+# Upload-Quellen müssen über den Vergleich hinaus leben, damit die 3D-Datengrundlage
+# (Octree/GLB) Wolke + Soll erneut lesen kann. Persistent unter <DATA>/uploads/.
+_UPLOAD_DIR = os.path.join(build3d.data_root(), "uploads")
+os.makedirs(_UPLOAD_DIR, exist_ok=True)
+
+
+def _rm(*paths: str):
+    for p in paths:
+        try: os.remove(p)
+        except OSError: pass
+
+
+def _evict(jid: str, result: engine.Result):
+    """Verdrängten Job aufräumen: persistierte Upload-Quellen entfernen."""
+    for key in ("soll_path", "cloud_path"):
+        p = result.meta.get(key)
+        if p and os.path.commonpath([os.path.abspath(p), _UPLOAD_DIR]) == _UPLOAD_DIR:
+            try: os.remove(p)
+            except OSError: pass
+
 
 def _store(result: engine.Result) -> str:
     if len(_RESULTS) >= _MAX_JOBS:
-        _RESULTS.pop(next(iter(_RESULTS)))
+        old_id = next(iter(_RESULTS))
+        _evict(old_id, _RESULTS.pop(old_id))
     jid = uuid.uuid4().hex[:12]
     _RESULTS[jid] = result
     return jid
@@ -48,7 +80,9 @@ def _get(job_id: str) -> engine.Result:
 
 
 async def _save_upload(up: UploadFile, suffix: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=suffix)
+    # Persistent unter _UPLOAD_DIR (nicht Tempdir), damit build3d die Quelle
+    # später erneut lesen kann. Aufräumen bei Job-Verdrängung (_evict).
+    fd, path = tempfile.mkstemp(suffix=suffix, dir=_UPLOAD_DIR)
     with os.fdopen(fd, "wb") as fh:
         while chunk := await up.read(1 << 20):
             fh.write(chunk)
@@ -92,20 +126,19 @@ async def compare(
         result = engine.compare(ifc_path, cloud_path, res=res, ground_pct=ground_pct,
                                 exg_thr=exg_thr, use_veg=use_veg, cap=cap, transform=tf)
     except ValueError as e:
+        _rm(ifc_path, cloud_path)
         raise HTTPException(422, str(e))
     except Exception as e:
         # Parse-/Lese-Fehler (defektes/unvollständiges File, falsches Format) sauber
         # melden statt 500. Häufig: iCloud-Datei nur online (leerer Upload).
+        _rm(ifc_path, cloud_path)
         raise HTTPException(
             400,
             "Datei konnte nicht verarbeitet werden. Ist die Soll-Datei ein gültiges "
             "IFC/TIN und die Ist-Datei eine vollständige LAZ/LAS/DSM-Datei? "
             f"(Detail: {type(e).__name__}: {str(e)[:200]})",
         )
-    finally:
-        for p in (ifc_path, cloud_path):
-            try: os.remove(p)
-            except OSError: pass
+    # Upload-Quellen bleiben erhalten (build3d liest sie erneut); Cleanup via _evict.
     jid = _store(result)
     g = result.grid
     return {"job_id": jid, "stats": engine.stats(result, tol),
@@ -183,6 +216,64 @@ def job_png(job_id: str, tol: float = 0.05, clip: float = 0.30):
     buf = io.BytesIO(); plt.tight_layout(); plt.savefig(buf, format="png", dpi=110); plt.close()
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
+
+
+# ----------------------------- 3D-Datengrundlage (Potree-Viewer) -----------------------------
+@app.post("/jobs/{job_id}/build3d")
+def job_build3d(job_id: str, payload: dict | None = None):
+    """Octree (Potree 2.0) + Soll-GLB + scene.json erzeugen. Idempotent, cached auf Volume.
+
+    payload: {bake_rgb?: bool, clip?: float, force?: bool}. Gibt scene.json-Inhalt zurück.
+    """
+    p = payload or {}
+    try:
+        scene = build3d.build(_get(job_id), job_id,
+                              bake_rgb=bool(p.get("bake_rgb", True)),
+                              clip=float(p.get("clip", 0.30)),
+                              force=bool(p.get("force", False)))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"3D-Aufbau fehlgeschlagen: {type(e).__name__}: {str(e)[:300]}")
+    return scene
+
+
+@app.get("/jobs/{job_id}/scene.json")
+def job_scene(job_id: str):
+    """scene.json für den Viewer (offset/cloudUrl/meshUrl/bbox). 404 wenn noch nicht gebaut."""
+    path = os.path.join(build3d.job_dir(job_id), "scene.json")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Noch keine 3D-Datengrundlage. Zuerst POST /jobs/{id}/build3d.")
+    return FileResponse(path, media_type="application/json")
+
+
+@app.get("/jobs/{job_id}/soll.glb")
+def job_soll_glb(job_id: str):
+    """Soll-Mesh als GLB (um scene.offset verschoben, float32-tauglich)."""
+    path = os.path.join(build3d.job_dir(job_id), "soll.glb")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Soll-GLB nicht vorhanden. Zuerst POST /jobs/{id}/build3d.")
+    return FileResponse(path, media_type="model/gltf-binary")
+
+
+# Content-Types der Potree-2.0-Octree-Dateien.
+_CLOUD_CT = {".json": "application/json", ".bin": "application/octet-stream"}
+
+
+@app.get("/jobs/{job_id}/cloud/{path:path}")
+def job_cloud(job_id: str, path: str):
+    """Potree-Octree-Dateien (metadata.json/hierarchy.bin/octree.bin) statisch ausliefern.
+
+    FileResponse unterstützt HTTP-Range — Potree lädt octree.bin per Range.
+    """
+    try:
+        full = build3d.cloud_file(job_id, path)
+    except ValueError:
+        raise HTTPException(400, "Ungültiger Pfad.")
+    if not os.path.isfile(full):
+        raise HTTPException(404, "Octree-Datei nicht gefunden.")
+    ct = _CLOUD_CT.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
+    return FileResponse(full, media_type=ct)
 
 
 # Weitere statische Assets (falls später CSS/JS ausgelagert wird) unter /static.
