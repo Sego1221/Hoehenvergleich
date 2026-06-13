@@ -56,6 +56,8 @@ export async function register() {
     )`);
     await sql.unsafe(`CREATE INDEX IF NOT EXISTS "bf_runs_project_idx"
       ON "hoehenvergleich"."bf_runs" ("project_id")`);
+    await sql.unsafe(`ALTER TABLE "hoehenvergleich"."bf_runs"
+      ADD COLUMN IF NOT EXISTS "overrides" jsonb`);
     console.log("[hoehenvergleich] instrumentation: additive DDL ok.");
   } catch (e) {
     console.error("[hoehenvergleich] instrumentation: DDL fehlgeschlagen:", e);

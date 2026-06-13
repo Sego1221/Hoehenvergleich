@@ -14,6 +14,7 @@ type Run = {
   surveyDate: string | null; createdAt: string;
   summary: { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number } | null;
   elements: BauteilRow[] | null;
+  overrides: Record<string, string> | null;
 };
 
 export function ProjectView({

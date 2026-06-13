@@ -98,6 +98,7 @@ export const bfRuns = hv.table("bf_runs", {
   computeJobId: text("compute_job_id"),
   summary: jsonb("summary"),       // { n_elements, gebaut, nicht_gebaut, verdeckt }
   elements: jsonb("elements"),     // [{ guid, betonage, kote_ok, status, frac_*, dz_mean, ... }]
+  overrides: jsonb("overrides"),   // manuelle Korrekturen { guid: status } (effektiv = override ?? auto)
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ byProject: index("bf_runs_project_idx").on(t.projectId) }));

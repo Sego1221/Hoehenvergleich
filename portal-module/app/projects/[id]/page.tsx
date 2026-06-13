@@ -64,6 +64,7 @@ export default async function ProjectPage({ params }: { params: { id: string } }
           createdAt: r.createdAt.toISOString(),
           summary: r.summary as { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number } | null,
           elements: r.elements as BauteilRow[] | null,
+          overrides: r.overrides as Record<string, string> | null,
         }))}
       />
     </div>
