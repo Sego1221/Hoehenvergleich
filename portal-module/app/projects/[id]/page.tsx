@@ -7,6 +7,7 @@ import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { TransformPanel } from "./transform-client";
 import { HistoryAndCompare } from "./compare-client";
+import { PerimeterPanel } from "./perimeter-client";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,12 @@ export default async function ProjectPage({ params }: { params: { id: string } }
           </p>
         </div>
       </div>
+
+      <PerimeterPanel
+        projectId={params.id}
+        initialPerimeter={(project.perimeter as [number, number][][] | null) ?? null}
+        initialParcels={(project.perimeterParcels as { egrid: string | null; number: string | null; ak: string | null }[] | null) ?? null}
+      />
 
       <HistoryAndCompare
         projectId={params.id}
