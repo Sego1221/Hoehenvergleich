@@ -75,6 +75,46 @@ export function fetchDz(
   return fetch(fmt === "png" ? previewPngUrl(jobId, tol) : geotiffUrl(jobId));
 }
 
+// ---------------------------------------------------------------------------
+// Baufortschritt: elementweise Bauteilerkennung (Struktur-IFC vs Scan)
+// ---------------------------------------------------------------------------
+export type BauteilRow = {
+  guid: string | null; name: string | null; bauteil: string | null;
+  betonage: string | null; material: string | null;
+  kote_ok: string | null; kote_uk: string | null; area_m2: number;
+  status: "gebaut" | "nicht_gebaut" | "verdeckt";
+  frac_gebaut: number; frac_nicht: number; frac_verdeckt: number;
+  dz_mean: number | null; n_points: number;
+};
+export type BauteilResult = {
+  summary: { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number };
+  elements: BauteilRow[];
+  job_id: string;
+  transform_flipped: boolean | null;
+  transform_warning: boolean;
+  meshUrl?: string;
+};
+
+/** Struktur-IFC + Scan -> Status je Bauteil. transform: Strukturmodell-Georef. */
+export async function bauteilEvaluate(
+  soll: Blob, sollName: string, ist: Blob, istName: string,
+  transform: { tE: number; tN: number; tH: number; angleDeg: number },
+  opts: { res?: number; tol?: number } = {},
+): Promise<BauteilResult> {
+  const fd = new FormData();
+  fd.append("soll", soll, sollName);
+  fd.append("cloud", ist, istName);
+  fd.append("transform", JSON.stringify({
+    tE: transform.tE, tN: transform.tN, tH: transform.tH, angle_deg: transform.angleDeg,
+  }));
+  if (opts.res !== undefined) fd.append("res", String(opts.res));
+  if (opts.tol !== undefined) fd.append("tol", String(opts.tol));
+  return req<BauteilResult>("/bauteil/evaluate", { method: "POST", body: fd });
+}
+
+/** Status-GLB eines Baufortschritt-Laufs (vom Compute-Volume). */
+export const statusGlbUrl = (jobId: string) => `${BASE}/jobs/${jobId}/status.glb`;
+
 /** Eine aus DXF gelesene Polylinie (Bauperimeter/Bereich). */
 export type DxfPolyline = {
   layer: string; closed: boolean; n: number;

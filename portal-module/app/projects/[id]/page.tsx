@@ -5,7 +5,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { HistoryAndCompare } from "./compare-client";
+import { ProjectView } from "./project-view";
+import type { BauteilRow } from "@/lib/computeClient";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,12 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     .where(eq(schema.comparisons.projectId, params.id))
     .orderBy(desc(schema.comparisons.createdAt));
 
+  const bfRuns = await db
+    .select()
+    .from(schema.bfRuns)
+    .where(eq(schema.bfRuns.projectId, params.id))
+    .orderBy(desc(schema.bfRuns.createdAt));
+
   return (
     <div className="grid" style={{ gap: 18 }}>
       <div className="spread">
@@ -38,15 +45,26 @@ export default async function ProjectPage({ params }: { params: { id: string } }
         </div>
       </div>
 
-      <HistoryAndCompare
+      <ProjectView
         projectId={params.id}
+        hasTransform={!!transform}
+        hasStructTransform={!!project.structureTransform}
         initialComparisons={comparisons.map((c) => ({
           id: c.id,
           name: c.name,
           surveyDate: c.surveyDate ? c.surveyDate.toISOString() : null,
           stats: c.stats as Record<string, number> | null,
         }))}
-        hasTransform={!!transform}
+        initialRuns={bfRuns.map((r) => ({
+          id: r.id,
+          name: r.name,
+          betonage: r.betonage,
+          scanName: r.scanName,
+          surveyDate: r.surveyDate ? r.surveyDate.toISOString() : null,
+          createdAt: r.createdAt.toISOString(),
+          summary: r.summary as { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number } | null,
+          elements: r.elements as BauteilRow[] | null,
+        }))}
       />
     </div>
   );
