@@ -245,6 +245,41 @@ export function Sidebar({
         </div>
       </nav>
 
+      {/* Projekt-Unternavigation (nur wenn ein Projekt offen ist). */}
+      {(() => {
+        const pm = pathname.match(/^\/projects\/([^/]+)/);
+        const projId = pm?.[1];
+        if (!projId) return null;
+        const base = `/projects/${projId}`;
+        const isBf = pathname === `${base}/baufortschritt`;
+        const sub = [
+          { label: "Vergleiche", href: base, icon: "Layers", active: !isBf },
+          { label: "Baufortschritt", href: `${base}/baufortschritt`, icon: "Building2", active: isBf },
+        ];
+        return (
+          <nav className="bm-side-nav">
+            <p className="bm-side-group">Projekt</p>
+            <div className="bm-side-list">
+              {sub.map((item) => {
+                const Icon = navIcon(item.icon);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={item.active ? "bm-side-row is-active" : "bm-side-row"}
+                    aria-current={item.active ? "page" : undefined}
+                    title={collapsed ? item.label : undefined}
+                  >
+                    <span className="bm-side-ico" aria-hidden="true"><Icon size={16} strokeWidth={2} /></span>
+                    <span className="bm-side-label">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
+        );
+      })()}
+
       {/* Spacer: drückt die "Apps"-Gruppe und den Footer nach unten. */}
       <div className="bm-side-spacer" />
 

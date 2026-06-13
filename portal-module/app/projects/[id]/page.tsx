@@ -1,19 +1,14 @@
 /**
- * Projekt-Detail: Georef-Transformation, Vergleichs-Historie, neuer Vergleich.
+ * Projekt → Vergleiche (Aushub Soll-Ist). Kopf kommt aus dem Projekt-Layout;
+ * Umschaltung auf Baufortschritt via Sidebar.
  */
-import Link from "next/link";
-import { notFound } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { ProjectView } from "./project-view";
-import type { BauteilRow } from "@/lib/computeClient";
+import { HistoryAndCompare } from "./compare-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProjectPage({ params }: { params: { id: string } }) {
-  const [project] = await db.select().from(schema.projects).where(eq(schema.projects.id, params.id));
-  if (!project) notFound();
-
+export default async function VergleichePage({ params }: { params: { id: string } }) {
   const [transform] = await db
     .select()
     .from(schema.projectTransforms)
@@ -27,60 +22,16 @@ export default async function ProjectPage({ params }: { params: { id: string } }
     .where(eq(schema.comparisons.projectId, params.id))
     .orderBy(desc(schema.comparisons.createdAt));
 
-  const bfRuns = await db
-    .select()
-    .from(schema.bfRuns)
-    .where(eq(schema.bfRuns.projectId, params.id))
-    .orderBy(desc(schema.bfRuns.surveyDate), desc(schema.bfRuns.createdAt));
-
-  const [bfModelRow] = await db
-    .select()
-    .from(schema.bfModel)
-    .where(eq(schema.bfModel.projectId, params.id))
-    .orderBy(desc(schema.bfModel.updatedAt))
-    .limit(1);
-
   return (
-    <div className="grid" style={{ gap: 18 }}>
-      <div className="spread">
-        <div>
-          <Link href="/" className="small muted">← Projekte</Link>
-          <h2 style={{ margin: "4px 0 0" }}>{project.name}</h2>
-          <div className="small muted">
-            {project.projektNummer}{project.ort ? ` · ${project.ort}` : ""}
-          </div>
-        </div>
-      </div>
-
-      <ProjectView
-        projectId={params.id}
-        hasTransform={!!transform}
-        initialModel={bfModelRow ? {
-          id: bfModelRow.id,
-          computeModelId: bfModelRow.computeModelId,
-          nElements: bfModelRow.nElements,
-          betonagen: bfModelRow.betonagen as string[] | null,
-          ifcNames: bfModelRow.ifcNames as string[] | null,
-          elements: bfModelRow.elements as { guid: string | null; name: string | null; betonage: string | null }[] | null,
-        } : null}
-        initialComparisons={comparisons.map((c) => ({
-          id: c.id,
-          name: c.name,
-          surveyDate: c.surveyDate ? c.surveyDate.toISOString() : null,
-          stats: c.stats as Record<string, number> | null,
-        }))}
-        initialRuns={bfRuns.map((r) => ({
-          id: r.id,
-          name: r.name,
-          betonage: r.betonage,
-          scanName: r.scanName,
-          surveyDate: r.surveyDate ? r.surveyDate.toISOString() : null,
-          createdAt: r.createdAt.toISOString(),
-          summary: r.summary as { n_elements: number; gebaut: number; nicht_gebaut: number; verdeckt: number } | null,
-          elements: r.elements as BauteilRow[] | null,
-          overrides: r.overrides as Record<string, string> | null,
-        }))}
-      />
-    </div>
+    <HistoryAndCompare
+      projectId={params.id}
+      hasTransform={!!transform}
+      initialComparisons={comparisons.map((c) => ({
+        id: c.id,
+        name: c.name,
+        surveyDate: c.surveyDate ? c.surveyDate.toISOString() : null,
+        stats: c.stats as Record<string, number> | null,
+      }))}
+    />
   );
 }
