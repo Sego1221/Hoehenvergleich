@@ -14,7 +14,12 @@ const nextConfig = {
   // Beta: Typfehler sollen den Build nicht blockieren (lokal kein Build testbar).
   typescript: { ignoreBuildErrors: true },
   // instrumentation.ts (additive DDL beim Start) — in Next 14.2 noch experimentell.
-  experimental: { instrumentationHook: true },
+  // postgres extern halten: sonst bundelt webpack die Cloudflare/Edge-Variante
+  // (cloudflare:sockets / node:stream) und der Build bricht.
+  experimental: {
+    instrumentationHook: true,
+    serverComponentsExternalPackages: ["postgres"],
+  },
 };
 
 export default nextConfig;

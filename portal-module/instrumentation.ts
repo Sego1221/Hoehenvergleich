@@ -16,7 +16,11 @@ export async function register() {
     console.warn("[hoehenvergleich] instrumentation: DATABASE_URL fehlt — DDL uebersprungen.");
     return;
   }
-  const { default: postgres } = await import("postgres");
+  // webpackIgnore + Variable: postgres NICHT bundlen (sonst zieht der Edge-Build
+  // die Cloudflare-Variante mit cloudflare:sockets). Zur Laufzeit (nodejs) via
+  // node_modules aufgeloest — postgres ist ohnehin durch lib/db vorhanden.
+  const pkg = "postgres";
+  const { default: postgres } = await import(/* webpackIgnore: true */ pkg);
   const sql = postgres(url, {
     max: 1,
     connection: { search_path: "hoehenvergleich,public" },
