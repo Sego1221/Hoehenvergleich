@@ -126,7 +126,10 @@ export default function PerimeterMap(props: Props) {
   }, []);
 
   useEffect(() => { modeRef.current = props.mode; draftRef.current = []; redraw(); }, [props.mode]); // eslint-disable-line
-  useEffect(() => { if (ready) { redraw(); fitPerimeter(); } }, [props.perimeter, ready]); // eslint-disable-line
+  // Bei Perimeter-Aenderung nur neu zeichnen — NICHT die Ansicht verschieben
+  // (sonst zoomt es nach jedem Parzellen-Klick wieder hinaus). Initiales
+  // Einpassen passiert einmalig beim Karten-Aufbau (s.o.).
+  useEffect(() => { if (ready) redraw(); }, [props.perimeter, ready]); // eslint-disable-line
   // Adresssuche -> hinfliegen.
   useEffect(() => {
     if (!ready || !props.focus || !mapRef.current) return;
