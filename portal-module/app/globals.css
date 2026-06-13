@@ -121,7 +121,7 @@ tr:hover td { background: var(--surface-2); }
   background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
 
 /* ---- Layout-Shell ---- */
-.shell { display: grid; grid-template-columns: 236px 1fr; min-height: 100vh; }
+.shell { display: grid; grid-template-columns: auto 1fr; min-height: 100vh; }
 .sidebar { background: var(--side-bg); border-right: 1px solid var(--border); }
 .content { padding: 18px 22px; max-width: 1500px; }
 
@@ -142,14 +142,20 @@ tr:hover td { background: var(--surface-2); }
   font-size: 0.86rem;
 }
 
-/* Kopf: Logo-Box + Wortmarke */
+/* Kopf: Logo-Box + Wortmarke (Klick = Sidebar ein-/ausklappen) */
 .bm-side-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 6px 8px 16px;
   margin-bottom: 14px;
+  border: none;
   border-bottom: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .bm-side-logo {
   display: grid;
@@ -287,3 +293,20 @@ tr:hover td { background: var(--surface-2); }
   color: var(--side-muted);
 }
 .bm-side-logout:hover { background: var(--side-hover); color: var(--side-text); text-decoration: none; }
+
+/* ---- Eingeklappte Sidebar (schmale Icon-Schiene, 60px) ---- */
+.bm-side { transition: width 0.18s ease; }
+.bm-side.is-collapsed { width: 60px; padding: 16px 8px; }
+.bm-side.is-collapsed .bm-side-wm,
+.bm-side.is-collapsed .bm-side-label,
+.bm-side.is-collapsed .bm-side-group,
+.bm-side.is-collapsed .bm-side-back,
+.bm-side.is-collapsed .bm-side-logout span { display: none; }
+.bm-side.is-collapsed .bm-side-head { justify-content: center; padding: 6px 0 16px; }
+.bm-side.is-collapsed .bm-side-row,
+.bm-side.is-collapsed .bm-side-logout,
+.bm-side.is-collapsed .bm-side-user { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; }
+.bm-side.is-collapsed .bm-side-row { border-left-width: 0; }
+.bm-side.is-collapsed .bm-side-row.is-active { background: var(--side-active-bg); }
+/* App-Liste im eingeklappten Modus immer als Icons sichtbar. */
+.bm-side.is-collapsed .bm-side-collapse { grid-template-rows: 1fr; }

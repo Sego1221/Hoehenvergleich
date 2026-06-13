@@ -180,6 +180,24 @@ export function Sidebar({
     });
   }
 
+  // Ganze Sidebar ein-/ausklappen (schmale Icon-Schiene). Zustand in localStorage,
+  // Default ausgeklappt. Klick aufs Logo schaltet um.
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem("bm-side-collapsed") === "1");
+    } catch {}
+  }, []);
+  function toggleCollapsed() {
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem("bm-side-collapsed", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  }
+
   // Aktiver App-eigener Nav-Punkt: exakter Pfad-Match (Startseite "/") bzw.
   // Prefix-Match für Unterseiten.
   function navActive(href: string): boolean {
@@ -188,12 +206,19 @@ export function Sidebar({
   }
 
   return (
-    <div className="bm-side">
-      {/* Kopf: Logo + Wortmarke. */}
-      <div className="bm-side-head">
+    <div className={collapsed ? "bm-side is-collapsed" : "bm-side"}>
+      {/* Kopf: Logo + Wortmarke. Klick klappt die Sidebar ein/aus. */}
+      <button
+        type="button"
+        className="bm-side-head"
+        onClick={toggleCollapsed}
+        aria-label="Sidebar ein- oder ausklappen"
+        aria-expanded={!collapsed}
+        title={collapsed ? "Sidebar ausklappen" : "Sidebar einklappen"}
+      >
         <span className="bm-side-logo">B</span>
         <span className="bm-side-wm">BIRCHMEIER</span>
-      </div>
+      </button>
 
       {/* OBEN: App-eigene Navigationspunkte. */}
       <nav className="bm-side-nav">
@@ -208,6 +233,7 @@ export function Sidebar({
                 href={item.href}
                 className={active ? "bm-side-row is-active" : "bm-side-row"}
                 aria-current={active ? "page" : undefined}
+                title={collapsed ? item.label : undefined}
               >
                 <span className="bm-side-ico" aria-hidden="true">
                   <Icon size={16} strokeWidth={2} />
@@ -249,6 +275,7 @@ export function Sidebar({
                     href={app.path}
                     className={active ? "bm-side-row is-active" : "bm-side-row"}
                     aria-current={active ? "page" : undefined}
+                    title={collapsed ? app.label : undefined}
                   >
                     <span className="bm-side-ico" aria-hidden="true">
                       <Icon size={16} strokeWidth={2} />
@@ -271,7 +298,7 @@ export function Sidebar({
           <span className="bm-side-avatar">{initials}</span>
           <span className="bm-side-label">{name || email}</span>
         </div>
-        <a href={logoutHref} className="bm-side-logout">
+        <a href={logoutHref} className="bm-side-logout" title={collapsed ? "Abmelden" : undefined}>
           <LogOut size={16} />
           <span>Abmelden</span>
         </a>
