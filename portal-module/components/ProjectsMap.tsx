@@ -12,7 +12,7 @@ import "leaflet/dist/leaflet.css";
 
 // Baustellen-Marker (Schutzhelm) als HTML/SVG fuer L.divIcon.
 const SITE_ICON_HTML =
-  '<div style="width:30px;height:30px;border-radius:50%;background:#20683D;' +
+  '<div style="width:28px;height:28px;border-radius:4px;background:#20683D;' +
   'border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4);display:flex;' +
   'align-items:center;justify-content:center">' +
   '<svg viewBox="0 0 24 24" width="16" height="16" fill="#fff">' +
