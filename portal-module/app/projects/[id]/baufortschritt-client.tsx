@@ -178,7 +178,7 @@ export function BaufortschrittPanel({
             </a>
           </div>
           <div className="grid" style={{ gap: 12, gridTemplateColumns: "1fr 1fr", alignItems: "start" }}>
-            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} />
+            <StatusViewer3D url={`${BP}/api/baufortschritt/${sel.id}/status.glb`} statusByGuid={statusByGuid} guids={(sel.elements ?? []).map((e) => e.guid)} />
             <div className="panel" style={{ padding: 0, maxHeight: 480, overflowY: "auto" }}>
               <div className="spread" style={{ padding: "10px 12px" }}>
                 <strong className="small">Bauteile</strong>

@@ -19,18 +19,20 @@ const STATUSES = [
 const HEX: Record<string, string> = { gebaut: "#28b450", nicht_gebaut: "#969696", verdeckt: "#f0962a", nicht_erfasst: "#5a5a6e" };
 
 export default function StatusViewer3D({
-  url, statusByGuid, height = 480,
+  url, statusByGuid, guids, height = 480,
 }: {
-  url: string; statusByGuid: Record<string, string>; height?: number;
+  url: string; statusByGuid: Record<string, string>; guids: (string | null)[]; height?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const meshesRef = useRef<{ guid: string; mesh: THREE.Mesh }[]>([]);
   const matsRef = useRef<Record<string, THREE.Material>>({});
   const mapRef = useRef(statusByGuid);
+  const guidsRef = useRef(guids);
   const visRef = useRef<Record<string, boolean>>({ gebaut: true, nicht_gebaut: true, verdeckt: true, nicht_erfasst: true });
   const [status, setStatus] = useState("Lade Modell …");
   const [vis, setVis] = useState<Record<string, boolean>>(visRef.current);
   mapRef.current = statusByGuid;
+  guidsRef.current = guids;
 
   const present = useMemo(() => {
     const set = new Set(Object.values(statusByGuid));
@@ -65,11 +67,12 @@ export default function StatusViewer3D({
     new GLTFLoader().load(url, (gltf) => {
       if (cancelled) return;
       const root = gltf.scene; scene.add(root);
-      const list: { guid: string; mesh: THREE.Mesh }[] = [];
-      root.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if ((m as THREE.Mesh).isMesh) list.push({ guid: o.name || (o.parent?.name ?? ""), mesh: m });
-      });
+      // Meshes in Reihenfolge sammeln und ueber den Index der Element-Reihenfolge
+      // (guids) zuordnen — robuster als ueber Knotennamen (GUIDs mit Sonderzeichen).
+      const meshes: THREE.Mesh[] = [];
+      root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) meshes.push(m); });
+      const gs = guidsRef.current;
+      const list = meshes.map((mesh, i) => ({ guid: (gs[i] ?? mesh.name ?? "") as string, mesh }));
       meshesRef.current = list; applyColorsVis();
       const box = new THREE.Box3().setFromObject(root);
       const c = box.getCenter(new THREE.Vector3()); const r = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 1);
