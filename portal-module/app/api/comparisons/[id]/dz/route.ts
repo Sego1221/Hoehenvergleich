@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const fmt = (req.nextUrl.searchParams.get("fmt") ?? "tif") === "png" ? "png" : "tif";
   const tol = Number(req.nextUrl.searchParams.get("tol") ?? "0.05");
+  const clip = Number(req.nextUrl.searchParams.get("clip") ?? "0") || undefined;
   const full = req.nextUrl.searchParams.get("full") === "1";
 
   const [c] = await db
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 
   const perimeter = full ? null : await perimeterForComparison(params.id);
-  const r = await fetchDz(c.jobId, fmt, tol, perimeter);
+  const r = await fetchDz(c.jobId, fmt, tol, perimeter, clip);
   if (!r.ok) {
     return NextResponse.json({ error: `Compute ${r.status}` }, { status: 502 });
   }

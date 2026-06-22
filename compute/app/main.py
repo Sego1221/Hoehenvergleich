@@ -551,9 +551,12 @@ def _render_dz_tif(r: engine.Result, polygons=None) -> io.BytesIO:
     return buf
 
 
-def _render_dz_png(r: engine.Result, clip=0.30, polygons=None) -> io.BytesIO:
+def _render_dz_png(r: engine.Result, clip=0.0, polygons=None) -> io.BytesIO:
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    # clip <= 0 -> Auto-Skala aus den Daten (cm-feine Unterschiede sichtbar).
+    if clip is None or clip <= 0:
+        clip = engine.auto_clip(r, polygons)
     g = r.grid
     fig, ax = plt.subplots(figsize=(7, 7))
     im = ax.imshow(_dz_display(r, polygons), origin="lower", extent=g.extent,
@@ -582,8 +585,8 @@ def job_geotiff_perim(job_id: str, payload: dict | None = None):
 
 
 @app.get("/jobs/{job_id}/dz.png")
-def job_png(job_id: str, tol: float = 0.05, clip: float = 0.30):
-    """ΔZ-Heatmap als PNG (für schnelle Vorschau)."""
+def job_png(job_id: str, tol: float = 0.05, clip: float = 0.0):
+    """ΔZ-Heatmap als PNG (für schnelle Vorschau). clip<=0 -> Auto-Skala."""
     return StreamingResponse(_render_dz_png(_get(job_id), clip), media_type="image/png")
 
 
@@ -591,7 +594,7 @@ def job_png(job_id: str, tol: float = 0.05, clip: float = 0.30):
 def job_png_perim(job_id: str, payload: dict | None = None):
     """Wie GET /dz.png, aber optional auf den Bauperimeter beschränkt (payload.perimeter)."""
     p = payload or {}
-    buf = _render_dz_png(_get(job_id), float(p.get("clip", 0.30)), p.get("perimeter"))
+    buf = _render_dz_png(_get(job_id), float(p.get("clip", 0.0)), p.get("perimeter"))
     return StreamingResponse(buf, media_type="image/png")
 
 

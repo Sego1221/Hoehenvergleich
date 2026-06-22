@@ -18,6 +18,7 @@ export type Mode = "view" | "line" | "polygon";
 type Props = {
   comparisonId: string;
   tol: number;
+  clip?: number; // Farbskala ±clip [m]; default 0.30
   extent?: [number, number, number, number] | null; // [minE,minN,maxE,maxN]
   mode: Mode;
   sections: { id: string; name: string; line: [number, number][] }[];
@@ -37,6 +38,8 @@ export default function HoehenMap(props: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const overlayRef = useRef<any>(null);
+  const georasterRef = useRef<any>(null);
+  const clip = props.clip ?? 0.30;
   const drawLayerRef = useRef<any>(null);
   const draftRef = useRef<[number, number][]>([]);
   const modeRef = useRef<Mode>(props.mode);
@@ -172,18 +175,24 @@ export default function HoehenMap(props: Props) {
 
       if (!tiffFailed) {
         try {
-          const parseGeoraster = (await import("georaster")).default as any;
           const GeoRasterLayer = (await import("georaster-layer-for-leaflet")).default as any;
-          const res = await fetch(`${BP}/api/comparisons/${props.comparisonId}/dz?fmt=tif`);
-          if (!res.ok) throw new Error("kein GeoTIFF");
-          const buf = await res.arrayBuffer();
-          const georaster = await parseGeoraster(buf);
+          // GeoTIFF nur EINMAL laden + cachen; Skala/Toleranz-Aenderung faerbt neu
+          // (kein erneuter Download des evtl. grossen Rasters bei 2-cm-Aufloesung).
+          let georaster = georasterRef.current;
+          if (!georaster) {
+            const parseGeoraster = (await import("georaster")).default as any;
+            const res = await fetch(`${BP}/api/comparisons/${props.comparisonId}/dz?fmt=tif`);
+            if (!res.ok) throw new Error("kein GeoTIFF");
+            const buf = await res.arrayBuffer();
+            georaster = await parseGeoraster(buf);
+            georasterRef.current = georaster;
+          }
           if (cancelled) return;
           const layer = new GeoRasterLayer({
             georaster,
             opacity: 0.7,
             resolution: 256,
-            pixelValuesToColorFn: (vals: number[]) => colorForDz(vals[0], props.tol),
+            pixelValuesToColorFn: (vals: number[]) => colorForDz(vals[0], props.tol, clip),
           });
           layer.addTo(mapRef.current);
           overlayRef.current = layer;
@@ -198,7 +207,7 @@ export default function HoehenMap(props: Props) {
 
       // PNG-Fallback (bereits eingefaerbt vom Compute-Service, an extent gelegt).
       if (props.extent) {
-        const url = `/api/comparisons/${props.comparisonId}/dz?fmt=png&tol=${props.tol}`;
+        const url = `/api/comparisons/${props.comparisonId}/dz?fmt=png&tol=${props.tol}&clip=${clip}`;
         const bounds = [[props.extent[1], props.extent[0]], [props.extent[3], props.extent[2]]];
         const layer = L.imageOverlay(url, bounds as any, { opacity: 0.7 });
         layer.addTo(mapRef.current);
@@ -207,25 +216,32 @@ export default function HoehenMap(props: Props) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, props.tol, tiffFailed]);
+  }, [ready, props.tol, clip, tiffFailed]);
 
+  const cm = (m: number) => `${Math.round(m * 100)} cm`;
   return (
     <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
       <div ref={ref} style={{ width: "100%", height: 520 }} />
-      {tiffFailed && (
-        <div className="small muted" style={{ padding: "4px 10px" }}>
-          GeoTIFF-Overlay nicht verfügbar — PNG-Vorschau aktiv.
+      <div className="spread" style={{ padding: "6px 10px", alignItems: "center", gap: 10 }}>
+        <div className="row" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+          <span className="muted">−{cm(clip)}</span>
+          <span style={{ width: 120, height: 10, borderRadius: 2, flex: "0 0 auto",
+            background: "linear-gradient(90deg,#e0533d,#f2c14e 45%,#bdbdbd 50%,#f2c14e 55%,#2f9e6f)" }} />
+          <span className="muted">+{cm(clip)}</span>
+          <span className="muted" style={{ marginLeft: 6 }}>tiefer ← 0 → höher · neutral ±{cm(props.tol)}</span>
         </div>
-      )}
+        {tiffFailed && <span className="small muted">GeoTIFF nicht verfügbar — PNG-Vorschau aktiv.</span>}
+      </div>
     </div>
   );
 }
 
-/** Farbskala fuer ΔZ relativ zur Toleranz: innerhalb = neutral, sonst rot/gruen. */
-function colorForDz(dz: number, tol: number): string | null {
+/** Farbskala fuer ΔZ: innerhalb Toleranz neutral, sonst rot (tiefer) / gruen (hoeher),
+ *  gesaettigt bei ±clip. clip steuert die Empfindlichkeit (klein = cm-fein sichtbar). */
+function colorForDz(dz: number, tol: number, clip: number): string | null {
   if (dz === null || Number.isNaN(dz)) return null;
   if (Math.abs(dz) <= tol) return "rgba(120,120,120,0.25)"; // innerhalb Toleranz
-  const k = Math.min(1, Math.abs(dz) / 0.5);
-  if (dz < 0) return `rgba(224,83,61,${0.4 + 0.5 * k})`;   // Ist tiefer als Soll = Abtrag noetig (Cut)
-  return `rgba(47,158,111,${0.4 + 0.5 * k})`;              // Ist hoeher = Auftrag (Fill)
+  const k = Math.min(1, Math.abs(dz) / Math.max(clip, 1e-6));
+  if (dz < 0) return `rgba(224,83,61,${0.4 + 0.5 * k})`;   // tiefer (Ist/B unter Soll/A)
+  return `rgba(47,158,111,${0.4 + 0.5 * k})`;              // hoeher (Ist/B ueber Soll/A)
 }

@@ -92,7 +92,7 @@ function NewComparisonDialog({
   const [surveyDate, setSurveyDate] = useState("");
   const [soll, setSoll] = useState<File | null>(null);
   const [ist, setIst] = useState<File | null>(null);
-  const [res, setRes] = useState(0.25);
+  const [res, setRes] = useState(0.02);
   const [tol, setTol] = useState(0.05);
   const [groundPct, setGroundPct] = useState(20);
   const [useVeg, setUseVeg] = useState(false);

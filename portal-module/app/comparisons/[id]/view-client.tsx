@@ -39,6 +39,7 @@ export function CompareView({
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("3d");
   const [tol, setTol] = useState<number>(params?.tol ?? 0.05);
+  const [clipOverride, setClipOverride] = useState<number | null>(null); // null = Auto-Skala
   const [live, setLive] = useState<Stats | null>(stats as unknown as Stats | null);
   const [mode, setMode] = useState<Mode>("view");
   const [sections, setSections] = useState<Section[]>(initialSections);
@@ -69,6 +70,10 @@ export function CompareView({
   const abtragVal = isClouds ? (live?.fill_m3 ?? stats?.fill_m3) : (live?.cut_m3 ?? stats?.cut_m3);
   const auftragVal = isClouds ? (live?.cut_m3 ?? stats?.cut_m3) : (live?.fill_m3 ?? stats?.fill_m3);
   const onTargetLabel = isClouds ? "% unverändert" : "% auf Soll";
+
+  // Farbskala der ΔZ-Karte: Auto (Perzentil aus Compute) oder manuell übersteuert.
+  const autoClip = live?.clip_auto ?? stats?.clip_auto ?? 0.30;
+  const clip = clipOverride ?? autoClip;
 
   async function handleDrawn(pts: [number, number][]) {
     if (mode === "line") {
@@ -179,6 +184,7 @@ export function CompareView({
         <HoehenMap
           comparisonId={comparisonId}
           tol={tol}
+          clip={clip}
           extent={extent}
           mode={mode}
           sections={sections}
@@ -211,6 +217,15 @@ export function CompareView({
           <Slider value={tol} min={0} max={0.2} step={0.01} onChange={setTol} />
           <div className="small muted" style={{ marginTop: 6 }}>
             Aktualisiert Kennzahlen und Einfärbung live, ohne Neuberechnung.
+          </div>
+          <div className="spread" style={{ marginTop: 12, alignItems: "center" }}>
+            <label style={{ marginBottom: 0 }}>Farbskala: ±{Math.round(clip * 100)} cm</label>
+            <button style={{ padding: "2px 10px" }} className={clipOverride === null ? "primary" : ""}
+              onClick={() => setClipOverride(null)} title="Automatisch aus den Daten (98.-Perzentil)">Auto</button>
+          </div>
+          <Slider value={clip} min={0.02} max={0.5} step={0.01} onChange={setClipOverride} />
+          <div className="small muted" style={{ marginTop: 6 }}>
+            {clipOverride === null ? "Automatisch — feine Unterschiede werden sichtbar." : "Manuell übersteuert; Auto-Knopf stellt zurück."}
           </div>
         </div>
 

@@ -314,6 +314,21 @@ def valid_mask(result: Result, polygons=None) -> np.ndarray:
     return result.valid
 
 
+def _auto_clip_from(d: np.ndarray, cap=5.0) -> float:
+    """Robuste symmetrische Farbskala aus den Differenzen: 98.-Perzentil von |ΔZ|,
+    auf [2 cm, cap] begrenzt. So sind auch cm-feine Unterschiede sichtbar."""
+    if d.size == 0:
+        return 0.10
+    c = float(np.percentile(np.abs(d), 98))
+    return float(min(max(c, 0.02), cap))
+
+
+def auto_clip(result: Result, polygons=None) -> float:
+    """Auto-Farbskala (±Wert) für die ΔZ-Karte, optional auf den Perimeter beschränkt."""
+    return _auto_clip_from(result.dz[valid_mask(result, polygons)],
+                           result.meta.get("cap", 5.0))
+
+
 def stats(result: Result, tol=0.05, polygons=None) -> dict:
     """Kennzahlen für gegebene Toleranz (günstig, da nur Schwellen).
 
@@ -335,6 +350,7 @@ def stats(result: Result, tol=0.05, polygons=None) -> dict:
         "min_m": float(d.min()), "max_m": float(d.max()),
         "on_target_pct": float(100 * np.mean(np.abs(d) <= tol)),
         "tol_m": tol,
+        "clip_auto": _auto_clip_from(d, result.meta.get("cap", 5.0)),
     }
 
 
