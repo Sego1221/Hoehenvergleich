@@ -436,6 +436,52 @@ async def compare(
             "georef": result.meta.get("soll_georef")}
 
 
+@app.post("/compare-clouds")
+async def compare_clouds(
+    cloud1: UploadFile = File(..., description="Referenz-Wolke A (LAZ/LAS)"),
+    cloud2: UploadFile = File(..., description="Vergleichs-Wolke B (LAZ/LAS)"),
+    res: float = Form(0.25),
+    tol: float = Form(0.05),
+    ground_pct: float = Form(0.20),
+    exg_thr: float = Form(0.10),
+    use_veg: bool = Form(True),
+    cap: float = Form(5.0),
+    transform: str = Form(""),
+):
+    """Zwei Punktwolken vergleichen (A vs. B) -> job_id + Statistik + Extent.
+    ΔZ = B − A (positiv = Auftrag, negativ = Abtrag). Sonst wie /compare."""
+    tf = json.loads(transform) if transform.strip() else None
+    skip_type = os.environ.get("HV_SKIP_TYPE_CHECK") == "1"
+    e1 = os.path.splitext(cloud1.filename or "")[1].lower()
+    e2 = os.path.splitext(cloud2.filename or "")[1].lower()
+    if not skip_type and (e1 not in {".laz", ".las"} or e2 not in {".laz", ".las"}):
+        raise HTTPException(415, "Beide Dateien müssen LAZ/LAS-Punktwolken sein.")
+    p1 = await _save_upload(cloud1, e1)
+    p2 = await _save_upload(cloud2, e2)
+    try:
+        result = engine.compare_clouds(p1, p2, res=res, ground_pct=ground_pct,
+                                       exg_thr=exg_thr, use_veg=use_veg, cap=cap, transform=tf)
+    except ValueError as e:
+        _rm(p1, p2)
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        _rm(p1, p2)
+        raise HTTPException(
+            400,
+            "Wolken konnten nicht verarbeitet werden. Sind beide vollständige "
+            f"LAZ/LAS-Dateien? (Detail: {type(e).__name__}: {str(e)[:200]})",
+        )
+    jid = _store(result)
+    try:
+        build3d.save_result(jid, result)
+    except Exception:
+        pass
+    g = result.grid
+    return {"job_id": jid, "stats": engine.stats(result, tol),
+            "extent": g.extent, "grid": {"nx": g.nx, "ny": g.ny, "res": g.res},
+            "georef": result.meta.get("cloud_georef")}
+
+
 @app.get("/jobs/{job_id}/stats")
 def job_stats(job_id: str, tol: float = 0.05):
     """Kennzahlen für neue Toleranz neu schwellen (kein Neuberechnen) -> Slider-tauglich."""

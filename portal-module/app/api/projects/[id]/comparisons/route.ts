@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { compare, build3d, type Transform } from "@/lib/computeClient";
+import { compare, compareClouds, build3d, type Transform } from "@/lib/computeClient";
 import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -27,11 +27,15 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const form = await req.formData();
-  const soll = form.get("soll");
-  const ist = form.get("ist") ?? form.get("cloud");
-  if (!(soll instanceof File) || !(ist instanceof File)) {
+  const mode = String(form.get("mode") ?? "aushub").trim();
+  const clouds = mode === "clouds";
+
+  // Aushub: soll (IFC/TIN) + ist (Wolke/DSM). Wolke-vs-Wolke: cloud1 (A) + cloud2 (B).
+  const fileA = clouds ? form.get("cloud1") : form.get("soll");
+  const fileB = clouds ? form.get("cloud2") : (form.get("ist") ?? form.get("cloud"));
+  if (!(fileA instanceof File) || !(fileB instanceof File)) {
     return NextResponse.json(
-      { error: "Soll- und Ist-Datei erforderlich." },
+      { error: clouds ? "Zwei Punktwolken (A und B) erforderlich." : "Soll- und Ist-Datei erforderlich." },
       { status: 400 },
     );
   }
@@ -73,7 +77,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   let result;
   try {
-    result = await compare(soll, soll.name, ist, ist.name, opts);
+    result = clouds
+      ? await compareClouds(fileA, fileA.name, fileB, fileB.name, opts)
+      : await compare(fileA, fileA.name, fileB, fileB.name, opts);
   } catch (e) {
     return NextResponse.json(
       { error: `Compute-Service-Fehler: ${(e as Error).message}` },
@@ -90,8 +96,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.warn(`[hoehenvergleich] build3d fehlgeschlagen (3D optional) job=${result.job_id}: ${(e as Error).message}`);
   }
 
-  const sollKind = /\.ifc$/i.test(soll.name) ? "ifc" : "mesh";
-  const istKind = /\.(tif|tiff|asc)$/i.test(ist.name) ? "dsm" : "cloud";
+  const sollKind = clouds ? "cloud" : (/\.ifc$/i.test(fileA.name) ? "ifc" : "mesh");
+  const istKind = clouds ? "cloud" : (/\.(tif|tiff|asc)$/i.test(fileB.name) ? "dsm" : "cloud");
 
   const [row] = await db
     .insert(schema.comparisons)
@@ -99,11 +105,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       projectId: params.id,
       name,
       surveyDate: surveyDateRaw ? new Date(surveyDateRaw) : null,
-      sollName: soll.name,
-      istName: ist.name,
+      sollName: fileA.name,
+      istName: fileB.name,
       sollKind,
       istKind,
-      params: opts as Record<string, unknown>,
+      params: { ...opts, mode } as Record<string, unknown>,
       stats: result.stats as unknown as Record<string, unknown>,
       computeJobId: result.job_id,
       createdBy: (await getCurrentUser()).name,

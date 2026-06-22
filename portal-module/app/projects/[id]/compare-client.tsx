@@ -13,6 +13,7 @@ import { BP } from "@/lib/api";
 type Comp = {
   id: string; name: string; surveyDate: string | null;
   stats: Record<string, number> | null;
+  mode?: string;
 };
 
 export function HistoryAndCompare({
@@ -33,29 +34,37 @@ export function HistoryAndCompare({
         <thead>
           <tr>
             <th>Name</th>
+            <th style={{ width: 80 }}>Art</th>
             <th style={{ width: 110 }}>Befliegung</th>
-            <th style={{ width: 120 }}>Abtrag (Cut)</th>
-            <th style={{ width: 120 }}>Auftrag (Fill)</th>
+            <th style={{ width: 120 }}>Abtrag</th>
+            <th style={{ width: 120 }}>Auftrag</th>
             <th style={{ width: 120 }}>Netto</th>
-            <th style={{ width: 110 }}>% auf Soll</th>
+            <th style={{ width: 110 }}>% i.T.</th>
             <th style={{ width: 90 }}></th>
           </tr>
         </thead>
         <tbody>
           {initialComparisons.length === 0 && (
-            <tr><td colSpan={7} className="muted">Noch keine Vergleiche.</td></tr>
+            <tr><td colSpan={8} className="muted">Noch keine Vergleiche.</td></tr>
           )}
-          {initialComparisons.map((c) => (
-            <tr key={c.id}>
-              <td>{c.name}</td>
-              <td className="muted">{dateCH(c.surveyDate)}</td>
-              <td style={{ color: "var(--cut)" }}>{m3(c.stats?.cut_m3)}</td>
-              <td style={{ color: "var(--fill)" }}>{m3(c.stats?.fill_m3)}</td>
-              <td>{m3(c.stats?.net_m3)}</td>
-              <td>{pct(c.stats?.on_target_pct)}</td>
-              <td><Link href={`/comparisons/${c.id}`}>Öffnen →</Link></td>
-            </tr>
-          ))}
+          {initialComparisons.map((c) => {
+            // Wolke-vs-Wolke: ΔZ = B − A, Abtrag/Auftrag gegenüber Aushub vertauscht.
+            const isClouds = c.mode === "clouds";
+            const abtrag = isClouds ? c.stats?.fill_m3 : c.stats?.cut_m3;
+            const auftrag = isClouds ? c.stats?.cut_m3 : c.stats?.fill_m3;
+            return (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td className="muted small">{isClouds ? "Wolke/Wolke" : "Aushub"}</td>
+                <td className="muted">{dateCH(c.surveyDate)}</td>
+                <td style={{ color: "var(--cut)" }}>{m3(abtrag)}</td>
+                <td style={{ color: "var(--fill)" }}>{m3(auftrag)}</td>
+                <td>{m3(c.stats?.net_m3)}</td>
+                <td>{pct(c.stats?.on_target_pct)}</td>
+                <td><Link href={`/comparisons/${c.id}`}>Öffnen →</Link></td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -78,28 +87,40 @@ function NewComparisonDialog({
   onClose: () => void; onDone: (comparisonId: string) => void;
 }) {
   const toast = useToast();
+  const [mode, setMode] = useState<"aushub" | "clouds">("aushub");
   const [name, setName] = useState("");
   const [surveyDate, setSurveyDate] = useState("");
   const [soll, setSoll] = useState<File | null>(null);
   const [ist, setIst] = useState<File | null>(null);
   const [res, setRes] = useState(0.25);
   const [tol, setTol] = useState(0.05);
-  const [groundPct, setGroundPct] = useState(10);
+  const [groundPct, setGroundPct] = useState(20);
   const [useVeg, setUseVeg] = useState(false);
   const [busy, setBusy] = useState(false);
+  const clouds = mode === "clouds";
 
   async function start() {
-    if (!soll || !ist) { toast("Soll- und Ist-Datei wählen.", "error"); return; }
+    if (!soll || !ist) {
+      toast(clouds ? "Beide Wolken (A und B) wählen." : "Soll- und Ist-Datei wählen.", "error");
+      return;
+    }
     setBusy(true);
     try {
       const fd = new FormData();
-      fd.append("soll", soll);
-      fd.append("ist", ist);
+      if (clouds) {
+        fd.append("mode", "clouds");
+        fd.append("cloud1", soll);
+        fd.append("cloud2", ist);
+      } else {
+        fd.append("soll", soll);
+        fd.append("ist", ist);
+      }
       if (name.trim()) fd.append("name", name.trim());
       if (surveyDate) fd.append("surveyDate", surveyDate);
       fd.append("res", String(res));
       fd.append("tol", String(tol));
-      fd.append("ground_pct", String(groundPct));
+      // Slider ist Prozent (1..50); die Engine erwartet einen Bruch (0..1).
+      fd.append("ground_pct", String(groundPct / 100));
       fd.append("use_veg", String(useVeg));
       // Georef-Transformation ist eine Projekt-Grundlage -> immer automatisch
       // anwenden (keine Frage pro Messung).
@@ -136,6 +157,20 @@ function NewComparisonDialog({
       }
     >
       <div className="grid">
+        <div>
+          <label>Vergleichsart</label>
+          <div className="row" style={{ display: "flex", gap: 6 }}>
+            <button type="button" className={mode === "aushub" ? "primary" : ""} style={{ flex: 1 }}
+              onClick={() => setMode("aushub")}>Aushub (Modell vs. Wolke)</button>
+            <button type="button" className={clouds ? "primary" : ""} style={{ flex: 1 }}
+              onClick={() => setMode("clouds")}>Wolke vs. Wolke</button>
+          </div>
+          <div className="small muted" style={{ marginTop: 4 }}>
+            {clouds
+              ? "Höhendifferenz B − A zweier Punktwolken (positiv = Auftrag, negativ = Abtrag)."
+              : "Soll-Modell (IFC/TIN) gegen Ist-Punktwolke."}
+          </div>
+        </div>
         <div className="grid cols-2">
           <div>
             <label>Name</label>
@@ -148,13 +183,13 @@ function NewComparisonDialog({
         </div>
         <div className="grid cols-2">
           <div>
-            <label>Soll (IFC / TIN)</label>
+            <label>{clouds ? "Wolke A — Referenz / früher (LAZ / LAS)" : "Soll (IFC / TIN)"}</label>
             {/* Kein accept-Filter: iOS Safari graut .ifc/.laz/.tif sonst aus (kein
                 bekannter UTI). Validierung erfolgt client- und serverseitig nach Endung. */}
             <input type="file" onChange={(e) => setSoll(e.target.files?.[0] ?? null)} />
           </div>
           <div>
-            <label>Ist (LAZ / LAS / DSM-GeoTIFF)</label>
+            <label>{clouds ? "Wolke B — Vergleich / später (LAZ / LAS)" : "Ist (LAZ / LAS / DSM-GeoTIFF)"}</label>
             <input type="file" onChange={(e) => setIst(e.target.files?.[0] ?? null)} />
           </div>
         </div>

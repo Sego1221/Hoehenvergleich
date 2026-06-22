@@ -206,6 +206,66 @@ def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
     return Result(grid, soll, ist, dz, valid, meta)
 
 
+def compare_clouds(cloud1_path: str, cloud2_path: str, *, res=0.25, ground_pct=0.20,
+                   exg_thr=0.10, use_veg=True, cap=5.0, transform: dict | None = None) -> Result:
+    """Zwei Punktwolken vergleichen: Referenz A (cloud1) vs. Vergleich B (cloud2).
+
+    Beide werden als Boden-DSM (Perzentil je Zelle) auf ein GEMEINSAMES Raster
+    (Vereinigung beider Ausdehnungen) gerastert. ΔZ = B − A (positiv = Auftrag,
+    negativ = Abtrag). Statistik/Profile/Volumen/3D laufen danach generisch wie
+    beim Aushub-Vergleich. Die 3D-Referenzfläche kommt aus dem DSM von A
+    (soll_kind = "dsm"), da es kein Soll-Mesh gibt.
+    """
+    xyz1, rgb1 = load_cloud(cloud1_path)
+    xyz1, g1 = georef.georeference(xyz1, transform)
+    xyz2, rgb2 = load_cloud(cloud2_path)
+    xyz2, g2 = georef.georeference(xyz2, transform)
+    x0 = min(float(xyz1[:, 0].min()), float(xyz2[:, 0].min()))
+    y0 = min(float(xyz1[:, 1].min()), float(xyz2[:, 1].min()))
+    x1 = max(float(xyz1[:, 0].max()), float(xyz2[:, 0].max()))
+    y1 = max(float(xyz1[:, 1].max()), float(xyz2[:, 1].max()))
+    nx = int(np.ceil((x1 - x0) / res)); ny = int(np.ceil((y1 - y0) / res))
+    grid = Grid(x0, y0, res, nx, ny)
+
+    soll, i1 = ground_dsm(xyz1, rgb1, grid, ground_pct, exg_thr, use_veg)   # Referenz A
+    ist, i2 = ground_dsm(xyz2, rgb2, grid, ground_pct, exg_thr, use_veg)    # Vergleich B
+
+    dz = ist - soll
+    valid = np.isfinite(dz) & (np.abs(dz) <= cap)
+    meta = {"res": res, "ground_pct": ground_pct, "exg_thr": exg_thr, "use_veg": use_veg,
+            "cap": cap, "mode": "clouds", "soll_kind": "dsm",
+            "soll_georef": g1, "cloud_georef": g2,
+            # Soll = DSM aus A (kein Mesh-Pfad); cloud_path = B (fuer cloud.bin/3D).
+            "soll_path": None, "cloud1_path": cloud1_path, "cloud_path": cloud2_path,
+            "cloud_transform": transform,
+            "removed_veg_a": i1.get("removed_veg"), "removed_veg_b": i2.get("removed_veg")}
+    return Result(grid, soll, ist, dz, valid, meta)
+
+
+def dsm_to_mesh(grid: Grid, z: np.ndarray):
+    """Höhenraster (ny,nx; NaN = Lücke) zu einem LV95-Dreiecksnetz (V,F) triangulieren.
+
+    Liefert die 3D-Referenzfläche bei Wolke-gegen-Wolke (es gibt kein Soll-Mesh).
+    Vertices an den Zellzentren mit endlicher Höhe; ein Quad wird nur vermascht,
+    wenn alle 4 Eck-Zellen endlich sind. Lücken bleiben Löcher.
+    """
+    g = grid
+    ex = g.x0 + (np.arange(g.nx) + 0.5) * g.res
+    ny_ = g.y0 + (np.arange(g.ny) + 0.5) * g.res
+    finite = np.isfinite(z)
+    idx = np.full(z.shape, -1, dtype=np.int64)
+    idx[finite] = np.arange(int(finite.sum()))
+    EX, NY = np.meshgrid(ex, ny_)
+    V = np.column_stack([EX[finite], NY[finite], z[finite]]).astype(np.float64)
+    quad = finite[:-1, :-1] & finite[:-1, 1:] & finite[1:, :-1] & finite[1:, 1:]
+    iy, ix = np.nonzero(quad)
+    c00 = idx[iy, ix]; c01 = idx[iy, ix + 1]; c10 = idx[iy + 1, ix]; c11 = idx[iy + 1, ix + 1]
+    if V.shape[0] == 0 or iy.size == 0:
+        raise ValueError("Referenz-Wolke hat keine zusammenhängende Fläche (leeres DSM).")
+    F = np.vstack([np.column_stack([c00, c01, c11]), np.column_stack([c00, c11, c10])])
+    return V, F
+
+
 def mask_from_polygons(grid: Grid, polygons) -> np.ndarray:
     """Bool-Maske (ny,nx): True, wo das Zellzentrum in IRGENDEINEM Polygon liegt.
 
@@ -375,8 +435,12 @@ def point_deviations(result: Result, xyz: np.ndarray) -> np.ndarray:
 def soll_mesh_lv95(result: Result):
     """Soll-Mesh (V,F) in LV95 rekonstruieren — aus den im Result-Meta hinterlegten Pfaden.
 
-    Wird vom GLB-Export gebraucht. Liefert georeferenzierte Vertices.
+    Wird vom GLB-Export gebraucht. Liefert georeferenzierte Vertices. Bei
+    Wolke-gegen-Wolke (soll_kind = "dsm") wird die Referenzfläche aus dem
+    gerasterten DSM von A trianguliert statt aus einem Mesh geladen.
     """
+    if result.meta.get("soll_kind") == "dsm":
+        return dsm_to_mesh(result.grid, result.soll_z)
     src = result.meta.get("soll_path")
     if not src:
         raise ValueError("Kein 'soll_path' im Result-Meta — Mesh kann nicht rekonstruiert werden.")

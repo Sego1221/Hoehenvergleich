@@ -31,6 +31,7 @@ export default async function VergleichePage({ params }: { params: { id: string 
         name: c.name,
         surveyDate: c.surveyDate ? c.surveyDate.toISOString() : null,
         stats: c.stats as Record<string, number> | null,
+        mode: ((c.params as Record<string, unknown> | null)?.mode as string) ?? "aushub",
       }))}
     />
   );

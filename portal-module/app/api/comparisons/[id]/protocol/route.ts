@@ -135,6 +135,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       istName: comparison.istName,
       koordinatensystem: "LV95 (EPSG:2056) / LN02",
       tol,
+      mode: ((comparison.params as Record<string, unknown> | null)?.mode === "clouds") ? "clouds" : "aushub",
       stats,
       dzPng,
       profile: profileData,

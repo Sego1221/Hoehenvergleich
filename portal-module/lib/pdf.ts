@@ -90,6 +90,7 @@ export interface ProtokollDaten {
   istName?: string | null;
   koordinatensystem?: string | null; // Default LV95 (EPSG:2056) / LN02
   tol: number; // Toleranz in m (für "auf Soll %" + dZ-Karte)
+  mode?: "aushub" | "clouds"; // clouds = Wolke-gegen-Wolke (ΔZ = B − A)
   stats: ProtokollStats;
   // dZ-Übersichtskarte als PNG-Bytes (vom Compute-Service /dz.png).
   dzPng?: Uint8Array | null;
@@ -168,6 +169,14 @@ function wrapPdfText(str: string, f: PDFFont, size: number, max: number): string
 // ---------------------------------------------------------------------------
 
 export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array> {
+  // Wolke-gegen-Wolke: ΔZ = B − A; Abtrag/Auftrag gegenüber dem Aushub
+  // vertauscht. Werte einmalig umsortieren, damit der Rest generisch bleibt.
+  const isClouds = data.mode === "clouds";
+  const SUBTITLE = isClouds ? "Wolke-gegen-Wolke (Höhendifferenz)" : "Soll-Ist-Aushubkontrolle";
+  const QUELLE = isClouds ? "Höhenvergleich (zwei Punktwolken)" : "Höhenvergleich (PIX4D-Wolke vs. Soll-Modell)";
+  const swap = <T extends { cutM3?: number | null; fillM3?: number | null }>(o: T): T =>
+    isClouds ? { ...o, cutM3: o.fillM3 ?? null, fillM3: o.cutM3 ?? null } : o;
+
   const doc = await PDFDocument.create();
   doc.setTitle(`Höhenvergleich-Protokoll ${data.vergleichName}`);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -248,7 +257,7 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
     let y = PAGE_H / 3;
     text(cover, "Höhenvergleich", MARGIN, y, 28, fontBold, BM);
     y -= 22;
-    text(cover, "Soll-Ist-Aushubkontrolle", MARGIN, y, 14, fontBold, MUTED);
+    text(cover, SUBTITLE, MARGIN, y, 14, fontBold, MUTED);
     y -= 30;
     text(
       cover,
@@ -273,7 +282,7 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
       ["Soll-Datei", data.sollName ?? ""],
       ["Ist-Datei", data.istName ?? ""],
       ["Toleranz", `± ${cm(data.tol)}`],
-      ["Quelle", "Höhenvergleich (PIX4D-Wolke vs. Soll-Modell)"],
+      ["Quelle", QUELLE],
     ];
     const labelW = 150;
     const lineH = 18;
@@ -294,7 +303,9 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
     oy -= 30;
     text(
       ovPage,
-      `Höhenabweichung Ist − Soll. Innerhalb ± ${cm(data.tol)} = auf Soll (grün), darüber Abtrag/Auffüllung.`,
+      isClouds
+        ? `Höhendifferenz B − A. Innerhalb ± ${cm(data.tol)} = unverändert (grün), darüber Auftrag/Abtrag.`
+        : `Höhenabweichung Ist − Soll. Innerhalb ± ${cm(data.tol)} = auf Soll (grün), darüber Abtrag/Auffüllung.`,
       MARGIN,
       oy - 10,
       9.5,
@@ -333,7 +344,7 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
     y -= 22;
     text(
       pg,
-      "Volumen- und Höhenkennzahlen der Soll-Ist-Aushubkontrolle.",
+      isClouds ? "Volumen- und Höhenkennzahlen der Wolke-gegen-Wolke-Differenz." : "Volumen- und Höhenkennzahlen der Soll-Ist-Aushubkontrolle.",
       MARGIN,
       y - 2,
       9,
@@ -342,14 +353,14 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
     );
     y -= 22;
 
-    const s = data.stats;
+    const s = swap(data.stats);
     // Kachel-Raster: 3 Spalten. Jede Kachel mit Label oben + Wert gross darunter.
     const kacheln: { label: string; value: string; color?: RGB }[] = [
-      { label: "Abtrag (Cut)", value: m3(s.cutM3), color: CUT_FARBE },
-      { label: "Auffüllung (Fill)", value: m3(s.fillM3), color: FILL_FARBE },
+      { label: "Abtrag", value: m3(s.cutM3), color: CUT_FARBE },
+      { label: "Auffüllung", value: m3(s.fillM3), color: FILL_FARBE },
       { label: "Netto-Volumen", value: m3(s.netM3) },
       { label: "Fläche", value: m2(s.areaM2) },
-      { label: `Auf Soll (± ${cm(data.tol)})`, value: pct(s.onTargetPct), color: BM },
+      { label: `${isClouds ? "Unverändert" : "Auf Soll"} (± ${cm(data.tol)})`, value: pct(s.onTargetPct), color: BM },
       { label: "Median dZ", value: cm(s.medianM) },
     ];
     const cols = 3;
@@ -398,7 +409,7 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
     }
 
     // ---- Bereichs-Volumen-Tabelle (optional) ----
-    const bereiche = (data.bereiche ?? []).filter((b) => b && b.name);
+    const bereiche = (data.bereiche ?? []).filter((b) => b && b.name).map(swap);
     if (bereiche.length > 0) {
       y = renderBereiche(pg, newPage, y, bereiche, { text, font, fontBold });
     }
@@ -442,7 +453,7 @@ export async function makeProtocolPdf(data: ProtokollDaten): Promise<Uint8Array>
     const size = 8;
     const tw = font.widthOfTextAtSize(label, size);
     pg.drawText(label, { x: PAGE_W - MARGIN - tw, y: 18, size, font, color: MUTED });
-    pg.drawText(`Höhenvergleich · Soll-Ist-Aushubkontrolle · Birchmeier Gruppe · ${erstellt}`, {
+    pg.drawText(`Höhenvergleich · ${SUBTITLE} · Birchmeier Gruppe · ${erstellt}`, {
       x: MARGIN,
       y: 18,
       size,

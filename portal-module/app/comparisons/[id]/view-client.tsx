@@ -62,6 +62,14 @@ export function CompareView({
 
   const onTarget = live?.on_target_pct ?? stats?.on_target_pct;
 
+  // Wolke-gegen-Wolke: ΔZ = B − A, daher sind Abtrag/Auftrag gegenüber dem
+  // Aushub vertauscht (cut_m3 = positiv = Auftrag). Spalten behalten ihre
+  // Bedeutung, der passende Wert wird eingesetzt.
+  const isClouds = (params as Record<string, unknown> | null)?.mode === "clouds";
+  const abtragVal = isClouds ? (live?.fill_m3 ?? stats?.fill_m3) : (live?.cut_m3 ?? stats?.cut_m3);
+  const auftragVal = isClouds ? (live?.cut_m3 ?? stats?.cut_m3) : (live?.fill_m3 ?? stats?.fill_m3);
+  const onTargetLabel = isClouds ? "% unverändert" : "% auf Soll";
+
   async function handleDrawn(pts: [number, number][]) {
     if (mode === "line") {
       setBusy("Profil…");
@@ -210,10 +218,10 @@ export function CompareView({
           <div className="small muted">Kennzahlen + Karte beziehen sich auf den Bauperimeter.</div>
         )}
         <div className="grid cols-2">
-          <div className="kpi cut"><div className="l">Abtrag (Cut)</div><div className="v">{m3(live?.cut_m3 ?? stats?.cut_m3)}</div></div>
-          <div className="kpi fill"><div className="l">Auftrag (Fill)</div><div className="v">{m3(live?.fill_m3 ?? stats?.fill_m3)}</div></div>
+          <div className="kpi cut"><div className="l">Abtrag</div><div className="v">{m3(abtragVal)}</div></div>
+          <div className="kpi fill"><div className="l">Auftrag</div><div className="v">{m3(auftragVal)}</div></div>
           <div className="kpi"><div className="l">Netto</div><div className="v">{m3(live?.net_m3 ?? stats?.net_m3)}</div></div>
-          <div className="kpi"><div className="l">% auf Soll</div><div className="v">{pct(onTarget)}</div></div>
+          <div className="kpi"><div className="l">{onTargetLabel}</div><div className="v">{pct(onTarget)}</div></div>
         </div>
 
         <div className="panel">
@@ -241,8 +249,8 @@ export function CompareView({
               {pendingPoly && <button onClick={() => saveRegion(`Bereich ${regions.length + 1}`)}>Speichern</button>}
             </div>
             <div className="grid cols-2">
-              <div className="kpi cut"><div className="l">Cut</div><div className="v" style={{ fontSize: 16 }}>{m3(lastVolume.cut_m3)}</div></div>
-              <div className="kpi fill"><div className="l">Fill</div><div className="v" style={{ fontSize: 16 }}>{m3(lastVolume.fill_m3)}</div></div>
+              <div className="kpi cut"><div className="l">Abtrag</div><div className="v" style={{ fontSize: 16 }}>{m3(isClouds ? lastVolume.fill_m3 : lastVolume.cut_m3)}</div></div>
+              <div className="kpi fill"><div className="l">Auftrag</div><div className="v" style={{ fontSize: 16 }}>{m3(isClouds ? lastVolume.cut_m3 : lastVolume.fill_m3)}</div></div>
               <div className="kpi"><div className="l">Netto</div><div className="v" style={{ fontSize: 16 }}>{m3(lastVolume.net_m3)}</div></div>
               <div className="kpi"><div className="l">Fläche</div><div className="v" style={{ fontSize: 16 }}>{m2(lastVolume.area_m2)}</div></div>
             </div>
