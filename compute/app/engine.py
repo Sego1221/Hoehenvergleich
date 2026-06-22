@@ -14,6 +14,27 @@ from . import georef
 
 
 # ----------------------------- Datenhaltung -----------------------------
+# Schutz gegen zu feine Raster (OOM): max. Zellzahl, per Env anpassbar.
+# 50 Mio Zellen ~ 3x float64 + bool ≈ 1.25 GB allein für die Raster.
+_MAX_CELLS = int(os.environ.get("HV_MAX_CELLS", "50000000"))
+
+
+def make_grid(x0: float, y0: float, x1: float, y1: float, res: float) -> "Grid":
+    """Raster aus BBox + Weite. Bricht bei zu vielen Zellen mit klarer Meldung ab
+    (statt den Compute-Dienst per OOM zu killen)."""
+    nx = int(np.ceil((x1 - x0) / res)); ny = int(np.ceil((y1 - y0) / res))
+    if nx < 1 or ny < 1:
+        raise ValueError("Leere Ausdehnung — keine vergleichbare Fläche.")
+    if nx * ny > _MAX_CELLS:
+        flaeche = (x1 - x0) * (y1 - y0)
+        raise ValueError(
+            f"Raster zu fein: {nx}×{ny} = {nx * ny:,} Zellen (Limit {_MAX_CELLS:,}). "
+            f"Bei {flaeche:,.0f} m² Fläche eine gröbere Rasterweite wählen "
+            f"(mind. ~{np.sqrt(flaeche / _MAX_CELLS):.3f} m) oder die Fläche per "
+            f"Bauperimeter einschränken.")
+    return Grid(x0, y0, res, nx, ny)
+
+
 @dataclass
 class Grid:
     x0: float; y0: float; res: float; nx: int; ny: int
@@ -181,10 +202,9 @@ def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
     V, F = load_soll(ifc_path)   # IFC oder Dreiecksvermaschung/TIN
     Vg, ginfo = georef.georeference(V, transform)            # Soll nach LV95
     cinfo = ginfo                                            # Default, falls Ist ein DSM ist
-    x0, y0 = Vg[:, 0].min(), Vg[:, 1].min()
-    x1, y1 = Vg[:, 0].max(), Vg[:, 1].max()
-    nx = int(np.ceil((x1 - x0) / res)); ny = int(np.ceil((y1 - y0) / res))
-    grid = Grid(x0, y0, res, nx, ny)
+    x0, y0 = float(Vg[:, 0].min()), float(Vg[:, 1].min())
+    x1, y1 = float(Vg[:, 0].max()), float(Vg[:, 1].max())
+    grid = make_grid(x0, y0, x1, y1, res)
 
     soll = rasterize_top_dsm(Vg, F, grid)
 
@@ -224,8 +244,7 @@ def compare_clouds(cloud1_path: str, cloud2_path: str, *, res=0.25, ground_pct=0
     y0 = min(float(xyz1[:, 1].min()), float(xyz2[:, 1].min()))
     x1 = max(float(xyz1[:, 0].max()), float(xyz2[:, 0].max()))
     y1 = max(float(xyz1[:, 1].max()), float(xyz2[:, 1].max()))
-    nx = int(np.ceil((x1 - x0) / res)); ny = int(np.ceil((y1 - y0) / res))
-    grid = Grid(x0, y0, res, nx, ny)
+    grid = make_grid(x0, y0, x1, y1, res)
 
     soll, i1 = ground_dsm(xyz1, rgb1, grid, ground_pct, exg_thr, use_veg)   # Referenz A
     ist, i2 = ground_dsm(xyz2, rgb2, grid, ground_pct, exg_thr, use_veg)    # Vergleich B

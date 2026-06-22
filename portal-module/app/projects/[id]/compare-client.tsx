@@ -195,8 +195,8 @@ function NewComparisonDialog({
         </div>
         <div className="grid cols-3">
           <div>
-            <label>Rasterweite: {res.toFixed(2)} m</label>
-            <Slider value={res} min={0.1} max={1} step={0.05} onChange={setRes} />
+            <label>Rasterweite: {(res * 100).toFixed(0)} cm</label>
+            <Slider value={res} min={0.01} max={1} step={0.01} onChange={setRes} />
           </div>
           <div>
             <label>Default-Toleranz: {(tol * 100).toFixed(0)} cm</label>
