@@ -663,6 +663,15 @@ def job_cloud_bin(job_id: str):
     return FileResponse(path, media_type="application/octet-stream")
 
 
+@app.get("/jobs/{job_id}/cloudA.bin")
+def job_cloud_bin_a(job_id: str):
+    """Zweite Wolke (Referenz A) bei Wolke-gegen-Wolke — gleiches Binärformat."""
+    path = os.path.join(build3d.job_dir(job_id), "cloudA.bin")
+    if not os.path.exists(path):
+        raise HTTPException(404, "cloudA.bin nicht vorhanden (nur bei Wolke-gegen-Wolke).")
+    return FileResponse(path, media_type="application/octet-stream")
+
+
 # Content-Types der Potree-2.0-Octree-Dateien.
 _CLOUD_CT = {".json": "application/json", ".bin": "application/octet-stream"}
 

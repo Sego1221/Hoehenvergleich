@@ -151,6 +151,7 @@ export function Viewer3D({
   const orthoRef = useRef<THREE.OrthographicCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
+  const pointsARef = useRef<THREE.Points | null>(null); // Referenz-Wolke A (Wolke-gegen-Wolke)
   const meshRef = useRef<THREE.Object3D | null>(null);
   const rafRef = useRef<number>(0);
   const sceneJsonRef = useRef<Scene | null>(null);
@@ -165,6 +166,9 @@ export function Viewer3D({
   const [status, setStatus] = useState<string>("Lade Viewer …");
   const [ready, setReady] = useState(false);
   const [meshVisible, setMeshVisible] = useState(true);
+  const [hasCloudA, setHasCloudA] = useState(false);   // Wolke-gegen-Wolke: zweite Wolke vorhanden
+  const [cloudAVisible, setCloudAVisible] = useState(true);
+  const [cloudBVisible, setCloudBVisible] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("3d");
   const [cutMode, setCutMode] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -400,6 +404,13 @@ export function Viewer3D({
         }
         if (cancelled) return;
 
+        // Wolke-gegen-Wolke: zweite Wolke (Referenz A, Echtfarbe) laden.
+        if (sj.binUrlA) {
+          await loadCloudA(sj.binUrlA);
+          if (!cancelled) setHasCloudA(true);
+        }
+        if (cancelled) return;
+
         await loadMesh(sj.meshUrl);
         if (cancelled) return;
 
@@ -424,6 +435,7 @@ export function Viewer3D({
       window.removeEventListener("mouseup", onMouseUp);
       controls.dispose();
       disposePoints();
+      disposePointsA();
       disposeMesh();
       clearCutLines();
       clearDrawTmp();
@@ -494,6 +506,31 @@ export function Viewer3D({
     pointsRef.current = points;
     sceneRef.current?.add(points);
     if (!dev) setColorMode("rgb"); // Legacy: kein ΔZ-Modus möglich
+  }
+
+  // Referenz-Wolke A (Wolke-gegen-Wolke): immer Echtfarbe (rgb), als zweite Points.
+  async function loadCloudA(binUrl: string) {
+    const resp = await fetch(binUrl, { cache: "no-store" });
+    if (!resp.ok) return;
+    const buf = await resp.arrayBuffer();
+    const dv = new DataView(buf);
+    const count = dv.getUint32(0, true);
+    if (count <= 0) return;
+    const oPos = 4;
+    const oRgb = oPos + count * 12 + count * 4; // pos(f32*3) + dev(f32) uebersprungen
+    const positions = new Float32Array(buf, oPos, count * 3);
+    const rgb = new Uint8Array(buf, oRgb, count * 3);
+    const col = new Uint8Array(count * 3);
+    col.set(rgb);
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geom.setAttribute("color", new THREE.BufferAttribute(col, 3, true));
+    geom.computeBoundingSphere();
+    const mat = new THREE.PointsMaterial({ size: pointSizeRef.current, sizeAttenuation: true, vertexColors: true });
+    const points = new THREE.Points(geom, mat);
+    points.visible = cloudAVisible;
+    pointsARef.current = points;
+    sceneRef.current?.add(points);
   }
 
   // Wolke clientseitig neu einfärben (ΔZ-Skala/Farben oder Echtfarbe), ohne Neuladen.
@@ -592,9 +629,15 @@ export function Viewer3D({
   // ---------------------------------------------- Punktgrösse (live) ---------
   useEffect(() => {
     pointSizeRef.current = pointSize;
-    const m = pointsRef.current?.material as THREE.PointsMaterial | undefined;
-    if (m) { m.size = pointSize; m.needsUpdate = true; }
+    for (const ref of [pointsRef, pointsARef]) {
+      const m = ref.current?.material as THREE.PointsMaterial | undefined;
+      if (m) { m.size = pointSize; m.needsUpdate = true; }
+    }
   }, [pointSize]);
+
+  // Wolken einzeln ein/ausblenden (B = ΔZ-Wolke, A = Referenz).
+  useEffect(() => { if (pointsRef.current) pointsRef.current.visible = cloudBVisible; }, [cloudBVisible, ready]);
+  useEffect(() => { if (pointsARef.current) pointsARef.current.visible = cloudAVisible; }, [cloudAVisible, ready]);
 
   // ------------------------------------------- Einfärbung (live) -------------
   useEffect(() => {
@@ -1061,6 +1104,14 @@ export function Viewer3D({
     (p.material as THREE.Material).dispose();
     pointsRef.current = null;
   }
+  function disposePointsA() {
+    const p = pointsARef.current;
+    if (!p) return;
+    sceneRef.current?.remove(p);
+    p.geometry.dispose();
+    (p.material as THREE.Material).dispose();
+    pointsARef.current = null;
+  }
   function disposeMesh() {
     const m = meshRef.current;
     if (!m) return;
@@ -1236,6 +1287,23 @@ export function Viewer3D({
             </div>
             <div className="small muted" style={{ marginTop: 6 }}>Halbtransparent über der Ist-Wolke.</div>
           </div>
+
+          {hasCloudA && (
+            <div className="panel">
+              <label className="small">Wolken</label>
+              <div className="grid cols-2" style={{ marginTop: 8 }}>
+                <button className={cloudAVisible ? "primary" : ""} onClick={() => setCloudAVisible((v) => !v)}>
+                  Wolke A {cloudAVisible ? "ein" : "aus"}
+                </button>
+                <button className={cloudBVisible ? "primary" : ""} onClick={() => setCloudBVisible((v) => !v)}>
+                  Wolke B {cloudBVisible ? "ein" : "aus"}
+                </button>
+              </div>
+              <div className="small muted" style={{ marginTop: 6 }}>
+                A = Referenz (Echtfarbe), B = Vergleich (ΔZ-gefärbt). Jede einzeln ein-/ausblendbar.
+              </div>
+            </div>
+          )}
 
           <div className="panel">
             <label className="small">Bauperimeter</label>

@@ -297,6 +297,9 @@ export type Scene = {
   cloudFormat?: string;              // "v2" = xyz_f32 + dev_f32 + rgb_u8
   hasRgb?: boolean;                  // Echtfarbe vorhanden
   meshUrl: string;                   // "/jobs/{jobId}/soll.glb"
+  binUrlA?: string;                  // Referenz-Wolke A (Wolke-gegen-Wolke), Echtfarbe
+  binCountA?: number;
+  hasRgbA?: boolean;
   cloudUrl?: string;                 // (legacy/optional) Octree-Metadata
   bbox: { min: [number, number, number]; max: [number, number, number] };
   deviation: {
@@ -335,6 +338,7 @@ export const cloudUrl = (jobId: string, path: string) =>
   `${BASE}/jobs/${jobId}/cloud/${path.replace(/^\/+/, "")}`;
 export const glbUrl = (jobId: string) => `${BASE}/jobs/${jobId}/soll.glb`;
 export const cloudBinUrl = (jobId: string) => `${BASE}/jobs/${jobId}/cloud.bin`;
+export const cloudBinAUrl = (jobId: string) => `${BASE}/jobs/${jobId}/cloudA.bin`;
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, init);

@@ -42,6 +42,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   scene.binUrl = `${BP}/api/comparisons/${params.id}/cloud.bin`;
   scene.meshUrl = `${BP}/api/comparisons/${params.id}/soll.glb`;
   if (scene.cloudUrl) scene.cloudUrl = `${BP}/api/comparisons/${params.id}/cloud/metadata.json`;
+  if (scene.binUrlA) scene.binUrlA = `${BP}/api/comparisons/${params.id}/cloudA.bin`;
 
   return NextResponse.json(scene);
 }

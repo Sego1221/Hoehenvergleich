@@ -236,6 +236,45 @@ def export_las_with_deviation(result: engine.Result, out_las: str,
 
 
 # ----------------------------- GLB-Export Soll -----------------------------
+def export_cloud_a(result: engine.Result, out_path: str, offset: np.ndarray):
+    """Referenz-Wolke A (Wolke-gegen-Wolke) im v2-Binärformat, um DENSELBEN Offset
+    wie Wolke B verschoben (Ausrichtung). dev = NaN (A hat keine Abweichung gegen
+    sich selbst); rgb = Echtfarbe der Wolke A, sonst grau."""
+    src = result.meta.get("cloud1_path")
+    if not src or not os.path.exists(src):
+        return None
+    from . import georef
+    xyz, rgb = engine.load_cloud(src)
+    xyz, _ = georef.georeference(xyz, result.meta.get("cloud_transform"))
+    n = xyz.shape[0]
+    env = os.environ.get("HV_CLOUD_MAX_POINTS", "").strip()
+    max_points = int(env) if env.isdigit() and int(env) > 0 else None
+    step = int(np.ceil(n / max_points)) if (max_points and n > max_points) else 1
+    xyz = xyz[::step]
+    if rgb is not None:
+        rgb = rgb[::step]
+    pos = (xyz - np.asarray(offset, dtype=np.float64)).astype(np.float32)
+    m = pos.shape[0]
+    dev = np.full(m, np.nan, dtype=np.float32)
+    # Echtfarbe, falls vorhanden UND nicht leer (RGB-Feld kann existieren, aber 0
+    # sein) — sonst neutrales Grau, damit A nicht schwarz erscheint.
+    has_rgb = rgb is not None and float(np.asarray(rgb).max()) > 0
+    if not has_rgb:
+        col = np.full((m, 3), 180, dtype=np.uint8)
+    else:
+        r = rgb.astype(np.float64)
+        if r.max() > 255:
+            r = r / 257.0
+        col = np.clip(r, 0, 255).astype(np.uint8)
+    with open(out_path, "wb") as fh:
+        fh.write(struct.pack("<I", m))
+        fh.write(np.ascontiguousarray(pos).tobytes())
+        fh.write(np.ascontiguousarray(dev).tobytes())
+        fh.write(np.ascontiguousarray(col).tobytes())
+    return {"count": m, "total": int(n), "has_rgb": bool(has_rgb),
+            "bytes": int(os.path.getsize(out_path))}
+
+
 def export_soll_glb(result: engine.Result, out_glb: str, offset: np.ndarray) -> dict:
     """Soll-Mesh als GLB exportieren, um denselben Offset verschoben wie die Wolke."""
     import trimesh
@@ -307,6 +346,14 @@ def build(result: engine.Result, job_id: str, *, bake_rgb: bool = True,
     glb_path = os.path.join(jd, "soll.glb")
     glb_info = export_soll_glb(result, glb_path, offset)
 
+    # 2b) Wolke-gegen-Wolke: Referenz-Wolke A als zweite Punktwolke (gleicher Offset).
+    a_info = None
+    if result.meta.get("cloud1_path"):
+        try:
+            a_info = export_cloud_a(result, os.path.join(jd, "cloudA.bin"), offset)
+        except Exception:
+            a_info = None
+
     # 3) Optional: LAS + Potree-Octree (langsam) — nur wenn potree=True.
     potree_info, potree_err = None, None
     if potree:
@@ -344,6 +391,10 @@ def build(result: engine.Result, job_id: str, *, bake_rgb: bool = True,
                  "bytes": glb_info["bytes"]},
         "octree_ready": potree_info is not None,
     }
+    if a_info:
+        scene["binUrlA"] = f"/jobs/{job_id}/cloudA.bin"   # Referenz-Wolke A (Echtfarbe)
+        scene["binCountA"] = a_info["count"]
+        scene["hasRgbA"] = bool(a_info["has_rgb"])
     if potree_err:
         scene["octree_error"] = potree_err
 
