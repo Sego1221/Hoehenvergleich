@@ -380,12 +380,14 @@ async def dxf_polylines(file: UploadFile = File(..., description="DXF (DWG vorhe
     return {"polylines": polylines}
 
 
-_SOLL_EXT = {".ifc", ".ifczip", ".obj", ".ply", ".stl", ".gltf", ".glb", ".off", ".3mf", ".dae"}
+# Soll: Mesh/TIN ODER fertiges DSM-GeoTIFF (Planungs-/Referenzraster).
+_SOLL_EXT = {".ifc", ".ifczip", ".obj", ".ply", ".stl", ".gltf", ".glb", ".off", ".3mf", ".dae",
+             ".tif", ".tiff", ".gtiff"}
 
 
 @app.post("/compare")
 async def compare(
-    soll: UploadFile = File(..., description="Soll-Modell: IFC oder Dreiecksvermaschung/TIN"),
+    soll: UploadFile = File(..., description="Soll: IFC/TIN-Mesh oder DSM-GeoTIFF"),
     cloud: UploadFile = File(..., description="Ist: Punktwolke LAZ/LAS"),
     res: float = Form(0.25),
     tol: float = Form(0.05),

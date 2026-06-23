@@ -96,7 +96,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.warn(`[hoehenvergleich] build3d fehlgeschlagen (3D optional) job=${result.job_id}: ${(e as Error).message}`);
   }
 
-  const sollKind = clouds ? "cloud" : (/\.ifc$/i.test(fileA.name) ? "ifc" : "mesh");
+  const sollKind = clouds ? "cloud"
+    : /\.ifc$/i.test(fileA.name) ? "ifc"
+    : /\.(tif|tiff|gtiff)$/i.test(fileA.name) ? "dsm"
+    : "mesh";
   const istKind = clouds ? "cloud" : (/\.(tif|tiff|asc)$/i.test(fileB.name) ? "dsm" : "cloud");
 
   const [row] = await db

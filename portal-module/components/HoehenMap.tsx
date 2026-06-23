@@ -195,7 +195,9 @@ export default function HoehenMap(props: Props) {
           let georaster = georasterRef.current;
           if (!georaster) {
             const parseGeoraster = (await import("georaster")).default as any;
-            const res = await fetch(`${BP}/api/comparisons/${props.comparisonId}/dz?fmt=tif`);
+            // Cache-Buster (reloadKey): nach Ausschluss-Aenderung liefert der
+            // Gateway sonst evtl. den alten (unmaskierten) GeoTIFF aus dem Cache.
+            const res = await fetch(`${BP}/api/comparisons/${props.comparisonId}/dz?fmt=tif&_=${props.reloadKey ?? 0}`, { cache: "no-store" });
             if (!res.ok) throw new Error("kein GeoTIFF");
             const buf = await res.arrayBuffer();
             georaster = await parseGeoraster(buf);
@@ -221,7 +223,7 @@ export default function HoehenMap(props: Props) {
 
       // PNG-Fallback (bereits eingefaerbt vom Compute-Service, an extent gelegt).
       if (props.extent) {
-        const url = `/api/comparisons/${props.comparisonId}/dz?fmt=png&tol=${props.tol}&clip=${clip}`;
+        const url = `/api/comparisons/${props.comparisonId}/dz?fmt=png&tol=${props.tol}&clip=${clip}&_=${props.reloadKey ?? 0}`;
         const bounds = [[props.extent[1], props.extent[0]], [props.extent[3], props.extent[2]]];
         const layer = L.imageOverlay(url, bounds as any, { opacity: 0.7 });
         layer.addTo(mapRef.current);

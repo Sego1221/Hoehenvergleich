@@ -199,14 +199,25 @@ _DSM_EXT = {".tif", ".tiff", ".gtiff"}
 # ----------------------------- Orchestrator -----------------------------
 def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
             exg_thr=0.10, use_veg=True, cap=5.0, transform: dict | None = None) -> Result:
-    V, F = load_soll(ifc_path)   # IFC oder Dreiecksvermaschung/TIN
-    Vg, ginfo = georef.georeference(V, transform)            # Soll nach LV95
+    # Soll: IFC/TIN-Mesh ODER fertiges DSM-GeoTIFF (z.B. Planungs-/Referenzraster).
+    soll_is_dsm = os.path.splitext(ifc_path)[1].lower() in _DSM_EXT
+    soll_kind = "mesh"
+    if soll_is_dsm:
+        import rasterio
+        with rasterio.open(ifc_path) as ds:
+            b = ds.bounds                                    # LV95 (EPSG:2056) angenommen
+        grid = make_grid(float(b.left), float(b.bottom), float(b.right), float(b.top), res)
+        soll, _sinfo = ist_from_dsm(ifc_path, grid)          # DSM auf das Raster sampeln
+        ginfo = {"already_lv95": True, "transformed": False}
+        soll_kind = "dsm"                                    # 3D-Mesh wird aus soll_z trianguliert
+    else:
+        V, F = load_soll(ifc_path)                           # IFC oder Dreiecksvermaschung/TIN
+        Vg, ginfo = georef.georeference(V, transform)        # Soll nach LV95
+        x0, y0 = float(Vg[:, 0].min()), float(Vg[:, 1].min())
+        x1, y1 = float(Vg[:, 0].max()), float(Vg[:, 1].max())
+        grid = make_grid(x0, y0, x1, y1, res)
+        soll = rasterize_top_dsm(Vg, F, grid)
     cinfo = ginfo                                            # Default, falls Ist ein DSM ist
-    x0, y0 = float(Vg[:, 0].min()), float(Vg[:, 1].min())
-    x1, y1 = float(Vg[:, 0].max()), float(Vg[:, 1].max())
-    grid = make_grid(x0, y0, x1, y1, res)
-
-    soll = rasterize_top_dsm(Vg, F, grid)
 
     # Ist: Punktwolke ODER fertiges DSM-GeoTIFF
     if os.path.splitext(cloud_path)[1].lower() in _DSM_EXT:
@@ -219,7 +230,7 @@ def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
     dz = ist - soll
     valid = np.isfinite(dz) & (np.abs(dz) <= cap)
     meta = {"res": res, "ground_pct": ground_pct, "exg_thr": exg_thr, "use_veg": use_veg,
-            "cap": cap, "soll_georef": ginfo, "cloud_georef": cinfo,
+            "cap": cap, "soll_georef": ginfo, "cloud_georef": cinfo, "soll_kind": soll_kind,
             # Quell-Pfade für die spätere 3D-Datengrundlage (Octree/GLB) merken.
             "soll_path": ifc_path, "cloud_path": cloud_path,
             "cloud_transform": transform, **dinfo}

@@ -183,7 +183,7 @@ function NewComparisonDialog({
         </div>
         <div className="grid cols-2">
           <div>
-            <label>{clouds ? "Wolke A — Referenz / früher (LAZ / LAS)" : "Soll (IFC / TIN)"}</label>
+            <label>{clouds ? "Wolke A — Referenz / früher (LAZ / LAS)" : "Soll (IFC / TIN / DSM-GeoTIFF)"}</label>
             {/* Kein accept-Filter: iOS Safari graut .ifc/.laz/.tif sonst aus (kein
                 bekannter UTI). Validierung erfolgt client- und serverseitig nach Endung. */}
             <input type="file" onChange={(e) => setSoll(e.target.files?.[0] ?? null)} />
