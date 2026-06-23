@@ -126,11 +126,13 @@ export const useToast = () => useContext(ToastCtx);
 
 export function ToastHost({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<Toast[]>([]);
+  const remove = useCallback((id: number) => setItems((s) => s.filter((t) => t.id !== id)), []);
   const push = useCallback((msg: string, kind: "info" | "error" = "info") => {
     const id = Date.now() + Math.random();
     setItems((s) => [...s, { id, msg, kind }]);
-    setTimeout(() => setItems((s) => s.filter((t) => t.id !== id)), 4000);
-  }, []);
+    // Fehler bleiben stehen, bis sie weggeklickt werden; Infos verschwinden selbst.
+    if (kind !== "error") setTimeout(() => remove(id), 4000);
+  }, [remove]);
   return (
     <ToastCtx.Provider value={push}>
       {children}
@@ -139,9 +141,23 @@ export function ToastHost({ children }: { children: React.ReactNode }) {
           <div
             key={t.id}
             className="panel"
-            style={{ borderColor: t.kind === "error" ? "var(--cut)" : "var(--border)", minWidth: 220 }}
+            style={{
+              borderColor: t.kind === "error" ? "var(--cut)" : "var(--border)",
+              minWidth: 240, maxWidth: 420, display: "flex", alignItems: "flex-start", gap: 10,
+            }}
           >
-            {t.msg}
+            <div style={{ flex: 1, whiteSpace: "pre-wrap" }}>
+              {t.kind === "error" && <strong style={{ color: "var(--cut)", display: "block", marginBottom: 2 }}>Fehler</strong>}
+              {t.msg}
+            </div>
+            <button
+              onClick={() => remove(t.id)}
+              title="Schliessen"
+              aria-label="Schliessen"
+              style={{ flex: "0 0 auto", padding: "0 8px", lineHeight: "20px", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "var(--muted, #888)" }}
+            >
+              ×
+            </button>
           </div>
         ))}
       </div>
