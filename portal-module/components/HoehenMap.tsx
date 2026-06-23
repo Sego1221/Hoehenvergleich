@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import "leaflet/dist/leaflet.css";
 import { BP } from "@/lib/api";
 
-export type Mode = "view" | "line" | "polygon";
+export type Mode = "view" | "line" | "polygon" | "exclude";
 
 type Props = {
   comparisonId: string;
@@ -23,6 +23,8 @@ type Props = {
   mode: Mode;
   sections: { id: string; name: string; line: [number, number][] }[];
   regions: { id: string; name: string; polygon: [number, number][] }[];
+  excludePolygons?: [number, number][][]; // Sperrbereiche (rot, gestrichelt)
+  reloadKey?: number; // bump -> ΔZ-Overlay neu laden (Ausschluss serverseitig maskiert)
   /** Liefert die fertig gezeichnete Geometrie (in LV95 E/N) zurueck. */
   onDrawn: (pts: [number, number][]) => void;
   orthoUrl?: string | null; // optionales eigenes Ortho (PNG/Tiles), TODO
@@ -46,12 +48,14 @@ export default function HoehenMap(props: Props) {
   const onDrawnRef = useRef(props.onDrawn);
   const sectionsRef = useRef(props.sections);
   const regionsRef = useRef(props.regions);
+  const excludeRef = useRef(props.excludePolygons ?? []);
   const [ready, setReady] = useState(false);
   const [tiffFailed, setTiffFailed] = useState(false);
 
   onDrawnRef.current = props.onDrawn;
   sectionsRef.current = props.sections;
   regionsRef.current = props.regions;
+  excludeRef.current = props.excludePolygons ?? [];
 
   // Karte einmalig aufbauen.
   useEffect(() => {
@@ -138,12 +142,14 @@ export default function HoehenMap(props: Props) {
       L.polyline(pts as any, { color: "#3b82f6", weight: 3, dashArray: "4 4" }).addTo(drawLayerRef.current);
     } else if (modeRef.current === "polygon" && pts.length >= 1) {
       L.polygon(pts as any, { color: "#d9a441", weight: 2, fillOpacity: 0.1, dashArray: "4 4" }).addTo(drawLayerRef.current);
+    } else if (modeRef.current === "exclude" && pts.length >= 1) {
+      L.polygon(pts as any, { color: "#e0533d", weight: 2, fillOpacity: 0.18, dashArray: "5 4" }).addTo(drawLayerRef.current);
     }
     pts.forEach((p) => L.circleMarker(p as any, { radius: 3, color: "#fff" }).addTo(drawLayerRef.current));
   }
 
   function finishDraft() {
-    const min = modeRef.current === "polygon" ? 3 : 2;
+    const min = modeRef.current === "line" ? 2 : 3;
     if (draftRef.current.length >= min) onDrawnRef.current(draftRef.current);
     draftRef.current = [];
     redrawAll();
@@ -162,8 +168,15 @@ export default function HoehenMap(props: Props) {
       L.polygon(r.polygon.map(([e, n]) => [n, e]) as any, { color: "#d9a441", weight: 2, fillOpacity: 0.12 })
         .bindTooltip(r.name).addTo(drawLayerRef.current);
     }
+    (excludeRef.current ?? []).forEach((poly, i) => {
+      L.polygon(poly.map(([e, n]) => [n, e]) as any, { color: "#e0533d", weight: 2, dashArray: "5 4", fillOpacity: 0.18 })
+        .bindTooltip(`Sperrbereich ${i + 1}`).addTo(drawLayerRef.current);
+    });
   }
-  useEffect(() => { redrawAll(); }, [props.sections, props.regions]); // eslint-disable-line
+  useEffect(() => { redrawAll(); }, [props.sections, props.regions, props.excludePolygons]); // eslint-disable-line
+
+  // Ausschluss geaendert -> gecachtes Raster verwerfen (wird neu geladen).
+  useEffect(() => { georasterRef.current = null; }, [props.reloadKey]);
 
   // ΔZ-Overlay laden (GeoTIFF, sonst PNG-Fallback).
   useEffect(() => {
@@ -176,8 +189,9 @@ export default function HoehenMap(props: Props) {
       if (!tiffFailed) {
         try {
           const GeoRasterLayer = (await import("georaster-layer-for-leaflet")).default as any;
-          // GeoTIFF nur EINMAL laden + cachen; Skala/Toleranz-Aenderung faerbt neu
-          // (kein erneuter Download des evtl. grossen Rasters bei 2-cm-Aufloesung).
+          // GeoTIFF cachen; Skala/Toleranz faerbt nur neu. Aendert sich der
+          // Ausschluss (reloadKey), ist das Raster serverseitig anders maskiert
+          // -> Cache verwerfen und neu laden.
           let georaster = georasterRef.current;
           if (!georaster) {
             const parseGeoraster = (await import("georaster")).default as any;
@@ -216,7 +230,7 @@ export default function HoehenMap(props: Props) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, props.tol, clip, tiffFailed]);
+  }, [ready, props.tol, clip, tiffFailed, props.reloadKey]);
 
   const cm = (m: number) => `${Math.round(m * 100)} cm`;
   return (

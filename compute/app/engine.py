@@ -307,11 +307,28 @@ def mask_from_polygons(grid: Grid, polygons) -> np.ndarray:
     return inside.reshape(g.ny, g.nx)
 
 
-def valid_mask(result: Result, polygons=None) -> np.ndarray:
-    """Gültige Vergleichszellen, optional auf den Bauperimeter (Polygon-Liste) beschränkt."""
+def valid_mask(result: Result, polygons=None, exclude=None, z_band=None) -> np.ndarray:
+    """Gültige Vergleichszellen.
+
+    polygons (optional): Bauperimeter — nur INNERHALB gültig.
+    exclude  (optional): Sperrbereich-Polygone — innerhalb wird AUSGESchlossen.
+    z_band   (optional): (zmin, zmax) auf die Ist-Oberfläche — Zellen ausserhalb
+             des Höhenbands raus (z.B. Vegetation/Maschinen über Terrain).
+    Alles reine Zellmaskierung -> live, ohne Neuberechnung.
+    """
+    m = result.valid
     if polygons:
-        return result.valid & mask_from_polygons(result.grid, polygons)
-    return result.valid
+        m = m & mask_from_polygons(result.grid, polygons)
+    if exclude:
+        m = m & ~mask_from_polygons(result.grid, exclude)
+    if z_band:
+        zmin, zmax = z_band
+        z = result.ist_z
+        if zmin is not None:
+            m = m & (z >= float(zmin))
+        if zmax is not None:
+            m = m & (z <= float(zmax))
+    return m
 
 
 def _auto_clip_from(d: np.ndarray, cap=5.0) -> float:
@@ -323,23 +340,32 @@ def _auto_clip_from(d: np.ndarray, cap=5.0) -> float:
     return float(min(max(c, 0.02), cap))
 
 
-def auto_clip(result: Result, polygons=None) -> float:
-    """Auto-Farbskala (±Wert) für die ΔZ-Karte, optional auf den Perimeter beschränkt."""
-    return _auto_clip_from(result.dz[valid_mask(result, polygons)],
+def auto_clip(result: Result, polygons=None, exclude=None, z_band=None) -> float:
+    """Auto-Farbskala (±Wert) für die ΔZ-Karte; berücksichtigt Perimeter+Ausschluss."""
+    return _auto_clip_from(result.dz[valid_mask(result, polygons, exclude, z_band)],
                            result.meta.get("cap", 5.0))
 
 
-def stats(result: Result, tol=0.05, polygons=None) -> dict:
+def _ist_range(result: Result):
+    """Höhenbereich der Ist-Oberfläche (für die Höhenband-Schieber im UI)."""
+    z = result.ist_z[np.isfinite(result.ist_z)]
+    if z.size == 0:
+        return None, None
+    return float(z.min()), float(z.max())
+
+
+def stats(result: Result, tol=0.05, polygons=None, exclude=None, z_band=None) -> dict:
     """Kennzahlen für gegebene Toleranz (günstig, da nur Schwellen).
 
-    polygons (optional): Bauperimeter [[ [E,N],... ],...] — schränkt alle
-    Kennzahlen (Fläche, Cut/Fill, % auf Soll) auf den Perimeter ein.
+    polygons (optional): Bauperimeter — schränkt alle Kennzahlen darauf ein.
+    exclude/z_band (optional): Cleanup-Ausschluss (Sperrbereiche + Höhenband).
     """
-    valid = valid_mask(result, polygons)
+    valid = valid_mask(result, polygons, exclude, z_band)
     d = result.dz[valid]
     A = result.grid.res ** 2
+    zmin, zmax = _ist_range(result)
     if d.size == 0:
-        return {"cells": 0}
+        return {"cells": 0, "ist_min_m": zmin, "ist_max_m": zmax}
     return {
         "cells": int(valid.sum()),
         "area_m2": float(valid.sum() * A),
@@ -351,23 +377,18 @@ def stats(result: Result, tol=0.05, polygons=None) -> dict:
         "on_target_pct": float(100 * np.mean(np.abs(d) <= tol)),
         "tol_m": tol,
         "clip_auto": _auto_clip_from(d, result.meta.get("cap", 5.0)),
+        "ist_min_m": zmin, "ist_max_m": zmax,
     }
 
 
-def volumes_in_polygon(result: Result, polygon, tol=0.05) -> dict:
+def volumes_in_polygon(result: Result, polygon, tol=0.05, exclude=None, z_band=None) -> dict:
     """Cut/Fill-Differenzvolumen innerhalb einer Polygon-Auswahl (LV95 [[E,N],...]).
 
     cut  = noch auszuheben (Ist über Soll), fill = aufzufüllen (Ist unter Soll).
-    Ohne Polygon-Filter: ganzes Modell (siehe stats()).
+    exclude/z_band: Cleanup-Ausschluss wird auch innerhalb der Auswahl angewendet.
     """
-    from matplotlib.path import Path
+    mask = valid_mask(result, [polygon], exclude, z_band)
     g = result.grid
-    ex = g.x0 + (np.arange(g.nx) + 0.5) * g.res
-    ny_ = g.y0 + (np.arange(g.ny) + 0.5) * g.res
-    EX, NY = np.meshgrid(ex, ny_)
-    inside = Path(np.asarray(polygon, dtype=float)).contains_points(
-        np.column_stack([EX.ravel(), NY.ravel()])).reshape(g.ny, g.nx)
-    mask = inside & result.valid
     d = result.dz[mask]
     A = g.res ** 2
     if d.size == 0:

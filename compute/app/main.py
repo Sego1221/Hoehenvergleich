@@ -488,14 +488,27 @@ def job_stats(job_id: str, tol: float = 0.05):
     return engine.stats(_get(job_id), tol)
 
 
+def _zband(p: dict):
+    """(zmin, zmax) aus payload['z_band'] = {min,max} oder None."""
+    zb = p.get("z_band") or p.get("zBand")
+    if not zb:
+        return None
+    zmin = zb.get("min") if isinstance(zb, dict) else None
+    zmax = zb.get("max") if isinstance(zb, dict) else None
+    if zmin is None and zmax is None:
+        return None
+    return (zmin, zmax)
+
+
 @app.post("/jobs/{job_id}/stats")
 def job_stats_perim(job_id: str, payload: dict | None = None):
-    """Wie GET /stats, aber optional auf den Bauperimeter beschränkt.
+    """Wie GET /stats, aber optional auf Bauperimeter + Cleanup-Ausschluss beschränkt.
 
-    payload: {tol?: float, perimeter?: [[ [E,N],... ],...]}.
+    payload: {tol?, perimeter?: [[ [E,N],... ],...], exclude?: [[...]], z_band?: {min,max}}.
     """
     p = payload or {}
-    return engine.stats(_get(job_id), float(p.get("tol", 0.05)), polygons=p.get("perimeter"))
+    return engine.stats(_get(job_id), float(p.get("tol", 0.05)),
+                        polygons=p.get("perimeter"), exclude=p.get("exclude"), z_band=_zband(p))
 
 
 @app.post("/jobs/{job_id}/profile")
@@ -516,7 +529,8 @@ def job_volume(job_id: str, payload: dict):
     poly = payload.get("polygon")
     if not poly or len(poly) < 3:
         raise HTTPException(400, "Feld 'polygon' [[E,N],...] mit mind. 3 Punkten erforderlich.")
-    return engine.volumes_in_polygon(_get(job_id), poly, tol=payload.get("tol", 0.05))
+    return engine.volumes_in_polygon(_get(job_id), poly, tol=payload.get("tol", 0.05),
+                                     exclude=payload.get("exclude"), z_band=_zband(payload))
 
 
 @app.post("/jobs/{job_id}/protocol.pdf")
@@ -531,17 +545,17 @@ def job_protocol(job_id: str, ctx: dict | None = None):
                              headers={"Content-Disposition": f'attachment; filename="protokoll_{job_id}.pdf"'})
 
 
-def _dz_display(r: engine.Result, polygons=None) -> np.ndarray:
-    """ΔZ-Anzeigeraster: ungültige Zellen UND (optional) ausserhalb des Perimeters -> NaN."""
-    valid = engine.valid_mask(r, polygons)
+def _dz_display(r: engine.Result, polygons=None, exclude=None, z_band=None) -> np.ndarray:
+    """ΔZ-Anzeigeraster: ungültige/ausgeschlossene Zellen -> NaN (werden nicht gezeichnet)."""
+    valid = engine.valid_mask(r, polygons, exclude, z_band)
     return np.where(valid, r.dz, np.nan)
 
 
-def _render_dz_tif(r: engine.Result, polygons=None) -> io.BytesIO:
+def _render_dz_tif(r: engine.Result, polygons=None, exclude=None, z_band=None) -> io.BytesIO:
     import rasterio
     from rasterio.transform import from_origin
     g = r.grid
-    arr = np.flipud(_dz_display(r, polygons)).astype(np.float32)
+    arr = np.flipud(_dz_display(r, polygons, exclude, z_band)).astype(np.float32)
     buf = io.BytesIO()
     with rasterio.open(buf, "w", driver="GTiff", height=g.ny, width=g.nx, count=1,
                        dtype="float32", crs="EPSG:2056",
@@ -551,15 +565,15 @@ def _render_dz_tif(r: engine.Result, polygons=None) -> io.BytesIO:
     return buf
 
 
-def _render_dz_png(r: engine.Result, clip=0.0, polygons=None) -> io.BytesIO:
+def _render_dz_png(r: engine.Result, clip=0.0, polygons=None, exclude=None, z_band=None) -> io.BytesIO:
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     # clip <= 0 -> Auto-Skala aus den Daten (cm-feine Unterschiede sichtbar).
     if clip is None or clip <= 0:
-        clip = engine.auto_clip(r, polygons)
+        clip = engine.auto_clip(r, polygons, exclude, z_band)
     g = r.grid
     fig, ax = plt.subplots(figsize=(7, 7))
-    im = ax.imshow(_dz_display(r, polygons), origin="lower", extent=g.extent,
+    im = ax.imshow(_dz_display(r, polygons, exclude, z_band), origin="lower", extent=g.extent,
                    cmap="RdYlBu_r", vmin=-clip, vmax=clip, aspect="equal")
     ax.set_xlabel("E (LV95)"); ax.set_ylabel("N (LV95)")
     plt.colorbar(im, ax=ax, shrink=0.8, label="ΔZ [m]")
@@ -578,8 +592,9 @@ def job_geotiff(job_id: str):
 
 @app.post("/jobs/{job_id}/dz.tif")
 def job_geotiff_perim(job_id: str, payload: dict | None = None):
-    """Wie GET /dz.tif, aber optional auf den Bauperimeter beschränkt (payload.perimeter)."""
-    buf = _render_dz_tif(_get(job_id), (payload or {}).get("perimeter"))
+    """Wie GET /dz.tif, optional Bauperimeter + Cleanup-Ausschluss (perimeter/exclude/z_band)."""
+    p = payload or {}
+    buf = _render_dz_tif(_get(job_id), p.get("perimeter"), p.get("exclude"), _zband(p))
     return StreamingResponse(buf, media_type="image/tiff",
                              headers={"Content-Disposition": f'attachment; filename="dz_{job_id}.tif"'})
 
@@ -592,9 +607,10 @@ def job_png(job_id: str, tol: float = 0.05, clip: float = 0.0):
 
 @app.post("/jobs/{job_id}/dz.png")
 def job_png_perim(job_id: str, payload: dict | None = None):
-    """Wie GET /dz.png, aber optional auf den Bauperimeter beschränkt (payload.perimeter)."""
+    """Wie GET /dz.png, optional Bauperimeter + Cleanup-Ausschluss (perimeter/exclude/z_band)."""
     p = payload or {}
-    buf = _render_dz_png(_get(job_id), float(p.get("clip", 0.0)), p.get("perimeter"))
+    buf = _render_dz_png(_get(job_id), float(p.get("clip", 0.0)),
+                         p.get("perimeter"), p.get("exclude"), _zband(p))
     return StreamingResponse(buf, media_type="image/png")
 
 

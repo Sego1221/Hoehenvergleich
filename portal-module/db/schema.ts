@@ -69,6 +69,9 @@ export const comparisons = hv.table("comparisons", {
   params: jsonb("params").notNull(),     // { res, tol, ground_pct, exg_thr, use_veg, cap }
   stats: jsonb("stats"),                 // { area_m2, cut_m3, fill_m3, net_m3, on_target_pct, median_m, ... }
   resultRef: text("result_ref"),         // Pfad/Key zum gespeicherten ΔZ-GeoTIFF (Objektspeicher)
+  // Cleanup/Ausschluss: Sperrbereich-Polygone + Höhenband. Maskiert Zellen live
+  // (keine Neuberechnung): { polygons: [[ [E,N],... ],...], zMin, zMax }.
+  exclusions: jsonb("exclusions"),
   computeJobId: text("compute_job_id"),  // letzte job_id im Compute-Service (Cache)
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

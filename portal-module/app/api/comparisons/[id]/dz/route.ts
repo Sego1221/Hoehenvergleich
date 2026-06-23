@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { fetchDz } from "@/lib/computeClient";
 import { perimeterForComparison } from "@/lib/perimeter";
+import { exclusionsForComparison } from "@/lib/exclusions";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 
   const perimeter = full ? null : await perimeterForComparison(params.id);
-  const r = await fetchDz(c.jobId, fmt, tol, perimeter, clip);
+  const exclusions = full ? null : await exclusionsForComparison(params.id);
+  const r = await fetchDz(c.jobId, fmt, tol, perimeter, clip, exclusions);
   if (!r.ok) {
     return NextResponse.json({ error: `Compute ${r.status}` }, { status: 502 });
   }

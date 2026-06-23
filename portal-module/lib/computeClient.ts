@@ -10,6 +10,7 @@ export type Stats = {
   cells: number; area_m2: number; cut_m3: number; fill_m3: number; net_m3: number;
   mean_m: number; median_m: number; std_m: number; min_m: number; max_m: number;
   on_target_pct: number; tol_m: number; clip_auto?: number;
+  ist_min_m?: number | null; ist_max_m?: number | null;
 };
 
 export type CompareResult = {
@@ -63,13 +64,28 @@ export async function compareClouds(
 /** Bauperimeter = Liste von Polygonen [[ [E,N],... ],...] (LV95). */
 export type Perimeter = [number, number][][];
 
+/** Cleanup-Ausschluss: Sperrbereich-Polygone + Höhenband (Ist-Oberfläche). */
+export type Exclusions = { polygons?: Perimeter; zMin?: number | null; zMax?: number | null } | null;
+
+export function hasExclusions(ex?: Exclusions): boolean {
+  return !!(ex && ((ex.polygons && ex.polygons.length) || ex.zMin != null || ex.zMax != null));
+}
+function exclBody(ex?: Exclusions): Record<string, unknown> {
+  const o: Record<string, unknown> = {};
+  if (ex?.polygons && ex.polygons.length) o.exclude = ex.polygons;
+  if (ex && (ex.zMin != null || ex.zMax != null)) o.z_band = { min: ex.zMin ?? null, max: ex.zMax ?? null };
+  return o;
+}
+
 /** Kennzahlen für neue Toleranz (Slider, ohne Neuberechnung).
- *  Mit perimeter: nur innerhalb des Bauperimeters (Cut/Fill/% auf Soll). */
-export function statsForTol(jobId: string, tol: number, perimeter?: Perimeter | null): Promise<Stats> {
-  if (perimeter && perimeter.length) {
+ *  Mit perimeter/exclusions: nur gültige Zellen (Cut/Fill/% auf Soll). */
+export function statsForTol(
+  jobId: string, tol: number, perimeter?: Perimeter | null, exclusions?: Exclusions,
+): Promise<Stats> {
+  if ((perimeter && perimeter.length) || hasExclusions(exclusions)) {
     return req<Stats>(`/jobs/${jobId}/stats`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tol, perimeter }),
+      body: JSON.stringify({ tol, perimeter: perimeter ?? undefined, ...exclBody(exclusions) }),
     });
   }
   return req<Stats>(`/jobs/${jobId}/stats?tol=${tol}`);
@@ -78,14 +94,16 @@ export function statsForTol(jobId: string, tol: number, perimeter?: Perimeter | 
 /** ΔZ-Karte (tif/png) vom Compute holen — optional auf den Bauperimeter geclippt.
  *  Liefert die rohe Response, damit die Proxy-Route den Body streamen kann. */
 export function fetchDz(
-  jobId: string, fmt: "tif" | "png", tol: number, perimeter?: Perimeter | null, clip?: number,
+  jobId: string, fmt: "tif" | "png", tol: number, perimeter?: Perimeter | null,
+  clip?: number, exclusions?: Exclusions,
 ): Promise<Response> {
-  const hasP = !!(perimeter && perimeter.length);
+  const usePost = !!(perimeter && perimeter.length) || hasExclusions(exclusions);
   const path = fmt === "png" ? "dz.png" : "dz.tif";
-  if (hasP) {
+  if (usePost) {
+    const base = fmt === "png" ? { tol, perimeter: perimeter ?? undefined, clip } : { perimeter: perimeter ?? undefined };
     return fetch(`${BASE}/jobs/${jobId}/${path}`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(fmt === "png" ? { tol, perimeter, clip } : { perimeter }),
+      body: JSON.stringify({ ...base, ...exclBody(exclusions) }),
     });
   }
   return fetch(fmt === "png" ? previewPngUrl(jobId, tol, clip) : geotiffUrl(jobId));
@@ -244,11 +262,13 @@ export function profile(jobId: string, line: [number, number][], step?: number):
   });
 }
 
-/** Cut/Fill-Volumen in Polygon-Auswahl [[E,N],...] (LV95). */
-export function volume(jobId: string, polygon: [number, number][], tol = 0.05): Promise<Volumes> {
+/** Cut/Fill-Volumen in Polygon-Auswahl [[E,N],...] (LV95). exclusions wirken auch hier. */
+export function volume(
+  jobId: string, polygon: [number, number][], tol = 0.05, exclusions?: Exclusions,
+): Promise<Volumes> {
   return req<Volumes>(`/jobs/${jobId}/volume`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ polygon, tol }),
+    body: JSON.stringify({ polygon, tol, ...exclBody(exclusions) }),
   });
 }
 

@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { fetchDz, profile, statsForTol, type Stats } from "@/lib/computeClient";
 import { perimeterForComparison } from "@/lib/perimeter";
+import { exclusionsForComparison } from "@/lib/exclusions";
 import { makeProtocolPdf, type ProfilDaten, type BereichDaten, type ProtokollStats } from "@/lib/pdf";
 
 export const runtime = "nodejs";
@@ -66,21 +67,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // ---- Bauperimeter (falls gesetzt) -> Kennzahlen + Karte darauf beschränken ----
   const perimeter = await perimeterForComparison(params.id);
+  const exclusions = await exclusionsForComparison(params.id);
 
   // ---- Kennzahlen für die gewählte Toleranz (frisch vom Compute, Fallback DB) ----
   // tol fliesst in "auf Soll %" ein -> nach Möglichkeit neu berechnen.
   let stats: ProtokollStats;
   try {
-    const s = await statsForTol(jobId, tol, perimeter);
+    const s = await statsForTol(jobId, tol, perimeter, exclusions);
     stats = mapStats(s);
   } catch {
     stats = mapStats((comparison.stats as Partial<Stats> | null) ?? null);
   }
 
-  // ---- ΔZ-Übersichtskarte (dz.png) vom Compute holen (auf Perimeter geclippt) ----
+  // ---- ΔZ-Übersichtskarte (dz.png) vom Compute holen (Perimeter + Ausschluss) ----
   let dzPng: Uint8Array | null = null;
   try {
-    const r = await fetchDz(jobId, "png", tol, perimeter);
+    const r = await fetchDz(jobId, "png", tol, perimeter, undefined, exclusions);
     if (r.ok) dzPng = new Uint8Array(await r.arrayBuffer());
   } catch {
     dzPng = null;

@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { Slider, useToast } from "@/components/ui";
 import { ProfileChart } from "@/components/ProfileChart";
 import { m3, m2, pct } from "@/lib/format";
-import type { Profile, Stats, Volumes } from "@/lib/computeClient";
+import type { Profile, Stats, Volumes, Exclusions } from "@/lib/computeClient";
 import { BP } from "@/lib/api";
 
 // Karte nur clientseitig (Leaflet kennt window/document).
@@ -20,26 +20,43 @@ const Viewer3D = dynamicImport(() => import("@/components/Viewer3D"), { ssr: fal
 
 type Tab = "3d" | "2d";
 
-type Mode = "view" | "line" | "polygon";
+type Mode = "view" | "line" | "polygon" | "exclude";
+type Excl = { polygons: [number, number][][]; zMin: number | null; zMax: number | null };
 
 type Section = { id: string; name: string; kind: string | null; line: [number, number][] };
 type Region = { id: string; name: string; polygon: [number, number][]; volumes: Record<string, number> | null };
 
 export function CompareView({
   comparisonId, projectId, projectName, comparisonName, stats, params,
-  initialSections, initialRegions, initialPerimeter, initialParcels,
+  initialSections, initialRegions, initialPerimeter, initialParcels, initialExclusions,
 }: {
   comparisonId: string; projectId: string; projectName: string; comparisonName: string;
   stats: Record<string, number> | null; params: Record<string, number> | null;
   initialSections: Section[]; initialRegions: Region[];
   initialPerimeter: [number, number][][] | null;
   initialParcels: { egrid: string | null; number: string | null; ak: string | null }[] | null;
+  initialExclusions: Excl | null;
 }) {
   const toast = useToast();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("3d");
   const [tol, setTol] = useState<number>(params?.tol ?? 0.05);
   const [clipOverride, setClipOverride] = useState<number | null>(null); // null = Auto-Skala
+  const [excl, setExcl] = useState<Excl>(initialExclusions ?? { polygons: [], zMin: null, zMax: null });
+  const [reloadKey, setReloadKey] = useState(0); // bump nach Ausschluss-Aenderung -> Karte/Stats neu
+
+  // Ausschluss speichern (PATCH) und Karte/Kennzahlen neu laden.
+  async function saveExclusions(next: Excl) {
+    setExcl(next);
+    try {
+      const body: Exclusions = (next.polygons.length || next.zMin != null || next.zMax != null) ? next : null;
+      await fetch(`${BP}/api/comparisons/${comparisonId}`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ exclusions: body }),
+      });
+      setReloadKey((k) => k + 1);
+    } catch { toast("Ausschluss konnte nicht gespeichert werden.", "error"); }
+  }
   const [live, setLive] = useState<Stats | null>(stats as unknown as Stats | null);
   const [mode, setMode] = useState<Mode>("view");
   const [sections, setSections] = useState<Section[]>(initialSections);
@@ -54,12 +71,12 @@ export function CompareView({
     if (debTimer.current) clearTimeout(debTimer.current);
     debTimer.current = setTimeout(async () => {
       try {
-        const r = await fetch(`${BP}/api/comparisons/${comparisonId}/stats?tol=${tol}`);
+        const r = await fetch(`${BP}/api/comparisons/${comparisonId}/stats?tol=${tol}&_=${reloadKey}`);
         if (r.ok) setLive(await r.json());
       } catch { /* still */ }
     }, 250);
     return () => { if (debTimer.current) clearTimeout(debTimer.current); };
-  }, [tol, comparisonId]);
+  }, [tol, comparisonId, reloadKey]);
 
   const onTarget = live?.on_target_pct ?? stats?.on_target_pct;
 
@@ -102,6 +119,11 @@ export function CompareView({
         setPendingPoly(pts);
       } catch (e) { toast((e as Error).message, "error"); }
       finally { setBusy(null); }
+    } else if (mode === "exclude") {
+      if (pts.length >= 3) {
+        void saveExclusions({ ...excl, polygons: [...excl.polygons, pts] });
+        toast("Sperrbereich hinzugefügt.");
+      }
     }
     setMode("view");
   }
@@ -189,6 +211,8 @@ export function CompareView({
           mode={mode}
           sections={sections}
           regions={regions}
+          excludePolygons={excl.polygons}
+          reloadKey={reloadKey}
           onDrawn={handleDrawn}
         />
 
@@ -248,13 +272,70 @@ export function CompareView({
             <button className={mode === "polygon" ? "primary" : ""} onClick={() => setMode(mode === "polygon" ? "view" : "polygon")}>
               Bereich zeichnen
             </button>
+            <button className={mode === "exclude" ? "primary" : ""} onClick={() => setMode(mode === "exclude" ? "view" : "exclude")}>
+              Sperrbereich zeichnen
+            </button>
           </div>
           {mode !== "view" && (
             <div className="small muted" style={{ marginTop: 8 }}>
-              In die Karte klicken; Doppelklick beendet die {mode === "line" ? "Linie" : "Fläche"}.
+              In die Karte klicken; Doppelklick beendet {mode === "line" ? "die Linie" : "die Fläche"}.
+              {mode === "exclude" && " Die Fläche wird aus Statistik/Volumen/Karte ausgeschlossen."}
             </div>
           )}
           {busy && <div className="small" style={{ marginTop: 8 }}>{busy}</div>}
+        </div>
+
+        {/* Cleanup: Sperrbereiche + Höhenband (live maskiert, keine Neuberechnung) */}
+        <div className="panel">
+          <div className="spread">
+            <strong className="small">Punkte ausschliessen</strong>
+            {(excl.polygons.length > 0 || excl.zMin != null || excl.zMax != null) && (
+              <button style={{ padding: "2px 10px" }} onClick={() => void saveExclusions({ polygons: [], zMin: null, zMax: null })}>
+                Alles zurücksetzen
+              </button>
+            )}
+          </div>
+          {excl.polygons.length > 0 ? (
+            <div className="grid" style={{ gap: 3, marginTop: 8 }}>
+              {excl.polygons.map((_, i) => (
+                <div key={i} className="spread small" style={{ alignItems: "center" }}>
+                  <span>Sperrbereich {i + 1} ({excl.polygons[i].length} Punkte)</span>
+                  <button style={{ padding: "1px 8px" }} title="Entfernen"
+                    onClick={() => void saveExclusions({ ...excl, polygons: excl.polygons.filter((__, j) => j !== i) })}>x</button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="small muted" style={{ marginTop: 6 }}>
+              „Sperrbereich zeichnen" entfernt Flächen (Bagger, Material, Vegetation) aus dem Ergebnis.
+            </div>
+          )}
+
+          {(() => {
+            const zlo = live?.ist_min_m ?? stats?.ist_min_m;
+            const zhi = live?.ist_max_m ?? stats?.ist_max_m;
+            if (zlo == null || zhi == null || zhi - zlo < 0.02) return null;
+            const lo = Math.floor(zlo * 100) / 100, hi = Math.ceil(zhi * 100) / 100;
+            return (
+              <div style={{ marginTop: 12 }}>
+                <div className="spread" style={{ alignItems: "center" }}>
+                  <label style={{ marginBottom: 0 }}>Höhenband (Ist) [m ü.M.]</label>
+                  {(excl.zMin != null || excl.zMax != null) && (
+                    <button style={{ padding: "2px 10px" }} onClick={() => void saveExclusions({ ...excl, zMin: null, zMax: null })}>Aus</button>
+                  )}
+                </div>
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  von {(excl.zMin ?? lo).toFixed(2)} bis {(excl.zMax ?? hi).toFixed(2)} — nur Zellen in diesem Höhenband zählen.
+                </div>
+                <div className="row" style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  <Slider value={excl.zMin ?? lo} min={lo} max={hi} step={0.05}
+                    onChange={(v) => void saveExclusions({ ...excl, zMin: v <= lo ? null : v })} />
+                  <Slider value={excl.zMax ?? hi} min={lo} max={hi} step={0.05}
+                    onChange={(v) => void saveExclusions({ ...excl, zMax: v >= hi ? null : v })} />
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {lastVolume && (

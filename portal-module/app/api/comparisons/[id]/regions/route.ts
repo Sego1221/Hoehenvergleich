@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { volume } from "@/lib/computeClient";
+import { exclusionsForComparison } from "@/lib/exclusions";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   let volumes;
   try {
-    volumes = await volume(c.jobId, polygon, tol);
+    const exclusions = await exclusionsForComparison(params.id);
+    volumes = await volume(c.jobId, polygon, tol, exclusions);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }

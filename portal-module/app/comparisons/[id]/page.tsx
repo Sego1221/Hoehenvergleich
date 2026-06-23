@@ -36,6 +36,15 @@ export default async function ComparisonPage({ params }: { params: { id: string 
         params={comparison.params as Record<string, number> | null}
         initialSections={sections.map((s) => ({ id: s.id, name: s.name, kind: s.kind, line: s.line as [number, number][] }))}
         initialRegions={regions.map((r) => ({ id: r.id, name: r.name, polygon: r.polygon as [number, number][], volumes: r.volumes as Record<string, number> | null }))}
+        initialExclusions={(() => {
+          const ex = comparison.exclusions as { polygons?: [number, number][][]; zMin?: number | null; zMax?: number | null } | null;
+          if (!ex) return null;
+          return {
+            polygons: Array.isArray(ex.polygons) ? ex.polygons : [],
+            zMin: typeof ex.zMin === "number" ? ex.zMin : null,
+            zMax: typeof ex.zMax === "number" ? ex.zMax : null,
+          };
+        })()}
       />
     </div>
   );

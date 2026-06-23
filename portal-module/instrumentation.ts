@@ -79,6 +79,8 @@ export async function register() {
       ADD COLUMN IF NOT EXISTS "offset" jsonb`);
     await sql.unsafe(`ALTER TABLE "hoehenvergleich"."bf_runs"
       ADD COLUMN IF NOT EXISTS "offset" jsonb`);
+    await sql.unsafe(`ALTER TABLE "hoehenvergleich"."comparisons"
+      ADD COLUMN IF NOT EXISTS "exclusions" jsonb`);
     console.log("[hoehenvergleich] instrumentation: additive DDL ok.");
   } catch (e) {
     console.error("[hoehenvergleich] instrumentation: DDL fehlgeschlagen:", e);

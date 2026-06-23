@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { statsForTol } from "@/lib/computeClient";
 import { perimeterForComparison } from "@/lib/perimeter";
+import { exclusionsForComparison } from "@/lib/exclusions";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
   try {
     const perimeter = full ? null : await perimeterForComparison(params.id);
-    const stats = await statsForTol(c.jobId, tol, perimeter);
+    const exclusions = await exclusionsForComparison(params.id);
+    const stats = await statsForTol(c.jobId, tol, perimeter, exclusions);
     return NextResponse.json(stats);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
