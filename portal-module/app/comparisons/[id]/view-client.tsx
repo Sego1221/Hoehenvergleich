@@ -170,6 +170,13 @@ export function CompareView({
     finally { setBusy(null); }
   }
 
+  // Vergleichs-Ansicht über die volle Breite (Breitenlimit der .content aufheben),
+  // damit der Viewer maximal gross wird.
+  useEffect(() => {
+    document.body.classList.add("hv-wide");
+    return () => document.body.classList.remove("hv-wide");
+  }, []);
+
   const extent = useMemo<[number, number, number, number] | null>(() => {
     // Falls der Compute-Service extent in stats geliefert hat — sonst null.
     const e = (stats as any)?.extent;

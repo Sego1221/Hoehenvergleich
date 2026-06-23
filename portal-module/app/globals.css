@@ -133,6 +133,9 @@ tr:hover td { background: var(--surface-2); }
    damit die Karte randlos neben der Sidebar steht. Wird nur auf der Kartenseite
    gesetzt (Body-Klasse via ProjectsMap). */
 body.hv-map-full .content { padding: 0; max-width: none; overflow: hidden; }
+/* Volle Breite (Vergleichs-Ansicht): nur das Breitenlimit aufheben, Padding
+   bleibt, damit der 3D-Viewer die ganze Breite nutzen kann. */
+body.hv-wide .content { max-width: none; }
 
 /* ============================================================
    Kanonische Birchmeier-App-Sidebar (HELLES Theme)
