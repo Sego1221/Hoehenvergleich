@@ -52,6 +52,28 @@ function pointInPolys(x: number, y: number, polys: Float64Array[], bboxes: Float
   return false;
 }
 
+// Konvexe Huelle (Andrew's monotone chain) einer Punktwolke [x,y][] -> Polygon.
+// Fuer den 3D-Lasso: aus den markierten Punkten eine Sperrflaeche bilden.
+function convexHull(pts: [number, number][]): [number, number][] {
+  if (pts.length < 3) return pts.slice();
+  const p = pts.slice().sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
+  const cross = (o: number[], a: number[], b: number[]) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper: [number, number][] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
 type RGB = [number, number, number];
 type Stops = ReadonlyArray<RGB>;
 
@@ -111,10 +133,13 @@ function computeCloudColors(
 
 export function Viewer3D({
   comparisonId, projectId, tol = 0.05, initialPerimeter = null, initialParcels = null,
+  excludePolygons = [], onAddExclude,
 }: {
   comparisonId: string; projectId: string; tol?: number;
   initialPerimeter?: [number, number][][] | null;
   initialParcels?: Parcel[] | null;
+  excludePolygons?: [number, number][][];
+  onAddExclude?: (poly: [number, number][]) => void;
 }) {
   const toast = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -192,8 +217,23 @@ export function Viewer3D({
   const colorArrRef = useRef<Uint8Array | null>(null);
   const viewModeRef = useRef<ViewMode>("3d");
   const cutModeRef = useRef(false);
+
+  // 3D-Lasso (Rechteck-Auswahl -> Sperrflaeche).
+  const [lasso, setLasso] = useState(false);
+  const lassoRef = useRef(false);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const [lassoRect, setLassoRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const onAddExcludeRef = useRef(onAddExclude);
+  const excludeObjRef = useRef<THREE.Group | null>(null);
+  onAddExcludeRef.current = onAddExclude;
+
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { cutModeRef.current = cutMode; }, [cutMode]);
+  useEffect(() => {
+    lassoRef.current = lasso;
+    const c = controlsRef.current;
+    if (c) c.enabled = !lasso; // waehrend Lasso keine Kamera-Drehung/Pan
+  }, [lasso]);
   useEffect(() => { perimeterModeRef.current = perimeterMode; }, [perimeterMode]);
   useEffect(() => { cloudFilterRef.current = cloudFilter; }, [cloudFilter]);
 
@@ -260,8 +300,38 @@ export function Viewer3D({
     };
     rafRef.current = requestAnimationFrame(animate);
 
+    // 3D-Lasso: Rechteck aufziehen -> beim Loslassen Punkte darin als Sperrflaeche.
+    const relXY = (ev: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    };
+    const onMouseDown = (ev: MouseEvent) => {
+      if (!lassoRef.current || ev.button !== 0) return;
+      ev.preventDefault();
+      const p = relXY(ev);
+      dragRef.current = p;
+      setLassoRect({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+    };
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!lassoRef.current || !dragRef.current) return;
+      const p = relXY(ev);
+      setLassoRect({ x0: dragRef.current.x, y0: dragRef.current.y, x1: p.x, y1: p.y });
+    };
+    const onMouseUp = (ev: MouseEvent) => {
+      if (!lassoRef.current || !dragRef.current) return;
+      const p = relXY(ev);
+      const r = { x0: dragRef.current.x, y0: dragRef.current.y, x1: p.x, y1: p.y };
+      dragRef.current = null;
+      setLassoRect(null);
+      if (Math.abs(r.x1 - r.x0) > 4 && Math.abs(r.y1 - r.y0) > 4) selectInRect(r);
+    };
+    renderer.domElement.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
     // Klick-Handler: Schnitt-Werkzeug ODER Perimeter (Parzelle/Zeichnen).
     const onClick = (ev: MouseEvent) => {
+      if (lassoRef.current) return; // im Lasso-Modus kein Picken
       // Perimeter hat Vorrang, wenn aktiv.
       if (perimeterModeRef.current === "parcel") {
         const p = pickPoint(ev);
@@ -349,6 +419,9 @@ export function Viewer3D({
       ro.disconnect();
       renderer.domElement.removeEventListener("click", onClick);
       renderer.domElement.removeEventListener("dblclick", onDblClick);
+      renderer.domElement.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
       controls.dispose();
       disposePoints();
       disposeMesh();
@@ -358,6 +431,10 @@ export function Viewer3D({
       if (regionsObjRef.current) {
         regionsObjRef.current.traverse((o) => (o as THREE.Line).geometry?.dispose?.());
         regionsObjRef.current = null;
+      }
+      if (excludeObjRef.current) {
+        excludeObjRef.current.traverse((o) => (o as THREE.Line).geometry?.dispose?.());
+        excludeObjRef.current = null;
       }
       renderer.dispose();
       if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement);
@@ -565,6 +642,63 @@ export function Viewer3D({
     const out = new THREE.Vector3();
     if (ray.ray.intersectPlane(plane, out)) return out.clone();
     return null;
+  }
+
+  // 3D-Lasso: Punkte im Bildschirm-Rechteck finden -> konvexe Huelle (LV95) ->
+  // als Sperrflaeche melden. Positionen sind LOKAL; LV95 = lokal + offset.
+  function selectInRect(rect: { x0: number; y0: number; x1: number; y1: number }) {
+    const renderer = rendererRef.current;
+    const pos = posRef.current;
+    const off = offset();
+    if (!renderer || !pos || !off) return;
+    const cam = activeCamera();
+    cam.updateMatrixWorld();
+    const vp = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    const el = renderer.domElement;
+    const w = el.clientWidth, h = el.clientHeight;
+    const xMin = Math.min(rect.x0, rect.x1), xMax = Math.max(rect.x0, rect.x1);
+    const yMin = Math.min(rect.y0, rect.y1), yMax = Math.max(rect.y0, rect.y1);
+    const count = cloudCountRef.current;
+    // Bei sehr grossen Wolken stichprobenartig testen (Huelle bleibt stabil).
+    const stride = count > 400000 ? Math.ceil(count / 400000) : 1;
+    const e = new THREE.Vector3();
+    const sel: [number, number][] = [];
+    for (let i = 0; i < count; i += stride) {
+      e.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]).applyMatrix4(vp);
+      if (e.z < -1 || e.z > 1) continue; // ausserhalb des Frustums (Tiefe)
+      const sx = (e.x * 0.5 + 0.5) * w;
+      const sy = (-e.y * 0.5 + 0.5) * h;
+      if (sx >= xMin && sx <= xMax && sy >= yMin && sy <= yMax) {
+        sel.push([pos[i * 3] + off[0], pos[i * 3 + 1] + off[1]]);
+      }
+    }
+    if (sel.length < 3) { toast("Keine Punkte im Rechteck.", "error"); return; }
+    const hull = convexHull(sel);
+    if (hull.length < 3) { toast("Auswahl zu schmal.", "error"); return; }
+    onAddExcludeRef.current?.(hull);
+    setLasso(false);
+    toast(`Sperrbereich aus ${sel.length} Punkten erstellt.`);
+  }
+
+  // Sperrflaechen (rot) im 3D auf bbox-Mittelhoehe rendern.
+  function renderExcludes() {
+    const scene = sceneRef.current;
+    const off = offset();
+    if (excludeObjRef.current) {
+      scene?.remove(excludeObjRef.current);
+      excludeObjRef.current.traverse((o) => (o as THREE.Line).geometry?.dispose?.());
+      excludeObjRef.current = null;
+    }
+    if (!scene || !off || excludePolygons.length === 0) return;
+    const group = new THREE.Group();
+    const mat = new THREE.LineBasicMaterial({ color: 0xe0533d });
+    const z = planZRef.current;
+    for (const poly of excludePolygons) {
+      const pts = poly.map(([E, N]) => new THREE.Vector3(E - off[0], N - off[1], z));
+      group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat));
+    }
+    excludeObjRef.current = group;
+    scene.add(group);
   }
 
   function addCutMarker(p: THREE.Vector3) {
@@ -899,6 +1033,11 @@ export function Viewer3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importedRegions, ready]);
 
+  useEffect(() => {
+    if (ready) renderExcludes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excludePolygons, ready]);
+
   // Perimeter rendern, sobald er sich ändert / die Szene bereit ist.
   useEffect(() => {
     perimeterRef.current = perimeter;
@@ -938,7 +1077,19 @@ export function Viewer3D({
     meshRef.current = null;
   }
 
+  function toggleLasso() {
+    setCutMode(false);
+    setPerimeterMode("off");
+    clearDrawTmp();
+    setLasso((v) => {
+      const next = !v;
+      if (next) toast("Lasso: Rechteck über die zu entfernenden Punkte ziehen.");
+      return next;
+    });
+  }
+
   function toggleCut() {
+    setLasso(false);
     setPerimeterMode("off");
     clearDrawTmp();
     setCutMode((v) => {
@@ -954,6 +1105,7 @@ export function Viewer3D({
   // Perimeter-Modus umschalten (deaktiviert das Schnitt-Werkzeug).
   function setPMode(next: PerimeterMode) {
     setCutMode(false);
+    setLasso(false);
     clearDrawTmp();
     setPerimeterMode((cur) => (cur === next ? "off" : next));
   }
@@ -989,8 +1141,17 @@ export function Viewer3D({
         >
           <div
             ref={containerRef}
-            style={{ position: "absolute", inset: 0, cursor: (cutMode || perimeterMode !== "off") ? "crosshair" : "grab" }}
+            style={{ position: "absolute", inset: 0, cursor: (cutMode || lasso || perimeterMode !== "off") ? "crosshair" : "grab" }}
           />
+          {/* Lasso-Rechteck (Bildschirm) */}
+          {lassoRect && (
+            <div style={{
+              position: "absolute", zIndex: 5, pointerEvents: "none",
+              left: Math.min(lassoRect.x0, lassoRect.x1), top: Math.min(lassoRect.y0, lassoRect.y1),
+              width: Math.abs(lassoRect.x1 - lassoRect.x0), height: Math.abs(lassoRect.y1 - lassoRect.y0),
+              border: "1.5px dashed #e0533d", background: "rgba(224,83,61,0.15)",
+            }} />
+          )}
           {/* Steuerknöpfe oben rechts: Werkzeuge ein/aus + Vollbild */}
           <div
             style={{
@@ -1225,6 +1386,23 @@ export function Viewer3D({
               Zwei Punkte klicken; das Profil erscheint unten. Mehrere Schnitte möglich.
             </div>
             {busy && <div className="small" style={{ marginTop: 6 }}>Profil …</div>}
+          </div>
+
+          <div className="panel">
+            <div className="spread">
+              <label className="small">Punkte ausschliessen (Lasso)</label>
+              <button className={lasso ? "primary" : ""} onClick={toggleLasso} disabled={!ready || !onAddExclude}>
+                {lasso ? "Lasso aktiv" : "Lasso"}
+              </button>
+            </div>
+            <div className="small muted" style={{ marginTop: 6 }}>
+              Rechteck über störende Punkte (Bagger, Material) ziehen — die Fläche wird aus
+              Statistik/Volumen/Karte ausgeschlossen.
+              {excludePolygons.length > 0 && ` Aktive Sperrbereiche: ${excludePolygons.length}.`}
+            </div>
+            <div className="small muted" style={{ marginTop: 4 }}>
+              Verwalten/Entfernen in der 2D-Karte unter „Punkte ausschliessen".
+            </div>
           </div>
 
           <div className="panel">

@@ -191,6 +191,8 @@ export function CompareView({
           tol={tol}
           initialPerimeter={initialPerimeter}
           initialParcels={initialParcels}
+          excludePolygons={excl.polygons}
+          onAddExclude={(poly) => void saveExclusions({ ...excl, polygons: [...excl.polygons, poly] })}
         />
       ) : (
         Map2D()
