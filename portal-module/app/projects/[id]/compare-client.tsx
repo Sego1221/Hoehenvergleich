@@ -22,7 +22,23 @@ export function HistoryAndCompare({
   projectId: string; initialComparisons: Comp[]; hasTransform: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [comps, setComps] = useState<Comp[]>(initialComparisons);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [delBusy, setDelBusy] = useState<string | null>(null);
   const router = useRouter();
+  const toast = useToast();
+
+  async function deleteComparison(id: string) {
+    setDelBusy(id);
+    try {
+      const r = await fetch(`${BP}/api/comparisons/${id}`, { method: "DELETE" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `Fehler ${r.status}`);
+      setComps((cs) => cs.filter((c) => c.id !== id));
+      setConfirmId(null);
+      toast("Vergleich gelöscht.");
+    } catch (e) { toast((e as Error).message, "error"); }
+    finally { setDelBusy(null); }
+  }
 
   return (
     <div className="panel" style={{ padding: 0 }}>
@@ -40,14 +56,14 @@ export function HistoryAndCompare({
             <th style={{ width: 120 }}>Auftrag</th>
             <th style={{ width: 120 }}>Netto</th>
             <th style={{ width: 110 }}>% i.T.</th>
-            <th style={{ width: 90 }}></th>
+            <th style={{ width: 170 }}></th>
           </tr>
         </thead>
         <tbody>
-          {initialComparisons.length === 0 && (
+          {comps.length === 0 && (
             <tr><td colSpan={8} className="muted">Noch keine Vergleiche.</td></tr>
           )}
-          {initialComparisons.map((c) => {
+          {comps.map((c) => {
             // Wolke-vs-Wolke: ΔZ = B − A, Abtrag/Auftrag gegenüber Aushub vertauscht.
             const isClouds = c.mode === "clouds";
             const abtrag = isClouds ? c.stats?.fill_m3 : c.stats?.cut_m3;
@@ -61,7 +77,22 @@ export function HistoryAndCompare({
                 <td style={{ color: "var(--fill)" }}>{m3(auftrag)}</td>
                 <td>{m3(c.stats?.net_m3)}</td>
                 <td>{pct(c.stats?.on_target_pct)}</td>
-                <td><Link href={`/comparisons/${c.id}`}>Öffnen →</Link></td>
+                <td>
+                  <div className="row" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <Link href={`/comparisons/${c.id}`}>Öffnen →</Link>
+                    {confirmId === c.id ? (
+                      <>
+                        <button style={{ padding: "1px 8px", borderColor: "var(--cut)", color: "var(--cut)" }}
+                          disabled={delBusy === c.id} onClick={() => void deleteComparison(c.id)}>
+                          {delBusy === c.id ? "…" : "Wirklich?"}
+                        </button>
+                        <button style={{ padding: "1px 8px" }} onClick={() => setConfirmId(null)}>Abbrechen</button>
+                      </>
+                    ) : (
+                      <button style={{ padding: "1px 8px" }} title="Vergleich löschen" onClick={() => setConfirmId(c.id)}>x</button>
+                    )}
+                  </div>
+                </td>
               </tr>
             );
           })}
