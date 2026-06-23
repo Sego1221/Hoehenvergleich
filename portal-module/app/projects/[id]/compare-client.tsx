@@ -126,6 +126,7 @@ function NewComparisonDialog({
   const [res, setRes] = useState(0.02);
   const [tol, setTol] = useState(0.05);
   const [groundPct, setGroundPct] = useState(20);
+  const [cap, setCap] = useState(20);   // max. |ΔZ| [m] — alles darüber gilt als Ausreisser
   const [useVeg, setUseVeg] = useState(false);
   const [busy, setBusy] = useState(false);
   const clouds = mode === "clouds";
@@ -152,6 +153,7 @@ function NewComparisonDialog({
       fd.append("tol", String(tol));
       // Slider ist Prozent (1..50); die Engine erwartet einen Bruch (0..1).
       fd.append("ground_pct", String(groundPct / 100));
+      fd.append("cap", String(cap));   // Höhendifferenzen über cap = Ausreisser, verworfen
       fd.append("use_veg", String(useVeg));
       // Georef-Transformation ist eine Projekt-Grundlage -> immer automatisch
       // anwenden (keine Frage pro Messung).
@@ -236,6 +238,16 @@ function NewComparisonDialog({
           <div>
             <label>Boden-Perzentil: {groundPct} %</label>
             <Slider value={groundPct} min={1} max={50} step={1} onChange={setGroundPct} />
+          </div>
+        </div>
+        <div className="grid cols-2">
+          <div>
+            <label>Max. Höhendifferenz (Cap): {cap} m</label>
+            <Slider value={cap} min={1} max={50} step={1} onChange={setCap} />
+            <div className="small muted" style={{ marginTop: 4 }}>
+              Differenzen über {cap} m gelten als Ausreisser und werden verworfen. Bei tiefem
+              Aushub/Auftrag höher stellen, sonst fehlt Volumen.
+            </div>
           </div>
         </div>
         <div className="row" style={{ gap: 18 }}>

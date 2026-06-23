@@ -191,21 +191,7 @@ export function CompareView({
         <button className={tab === "2d" ? "primary" : ""} onClick={() => setTab("2d")}>2D-Karte</button>
       </div>
 
-      {tab === "3d" ? (
-        <Viewer3D
-          comparisonId={comparisonId}
-          projectId={projectId}
-          tol={tol}
-          initialPerimeter={initialPerimeter}
-          initialParcels={initialParcels}
-          excludePolygons={excl.polygons}
-          onAddExclude={(poly) => void saveExclusions({ ...excl, polygons: [...excl.polygons, poly] })}
-        />
-      ) : (
-        Map2D()
-      )}
-
-      {/* Differenzen direkt unter dem Viewer — in beiden Tabs sichtbar. */}
+      {/* Differenzen-Leiste — immer sichtbar (unabhängig von Werkzeugen/Tab). */}
       <div className="panel">
         <div className="spread" style={{ marginBottom: 8, alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
           <strong className="small">Differenzen (ΔZ = {isClouds ? "B − A" : "Ist − Soll"})</strong>
@@ -231,6 +217,20 @@ export function CompareView({
           </div>
         ) : null}
       </div>
+
+      {tab === "3d" ? (
+        <Viewer3D
+          comparisonId={comparisonId}
+          projectId={projectId}
+          tol={tol}
+          initialPerimeter={initialPerimeter}
+          initialParcels={initialParcels}
+          excludePolygons={excl.polygons}
+          onAddExclude={(poly) => void saveExclusions({ ...excl, polygons: [...excl.polygons, poly] })}
+        />
+      ) : (
+        Map2D()
+      )}
     </div>
   );
 
