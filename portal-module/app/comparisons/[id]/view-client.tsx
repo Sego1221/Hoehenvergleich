@@ -197,6 +197,33 @@ export function CompareView({
       ) : (
         Map2D()
       )}
+
+      {/* Differenzen direkt unter dem Viewer — in beiden Tabs sichtbar. */}
+      <div className="panel">
+        <div className="spread" style={{ marginBottom: 8, alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+          <strong className="small">Differenzen (ΔZ = {isClouds ? "B − A" : "Ist − Soll"})</strong>
+          <span className="small muted">
+            {(() => {
+              const z = (live ?? stats) as Record<string, number> | null;
+              const f = (v?: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)} m`);
+              return `Ø ${f(z?.mean_m)} · Median ${f(z?.median_m)} · Spanne ${f(z?.min_m)} … ${f(z?.max_m)}`;
+            })()}
+          </span>
+        </div>
+        <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+          <div className="kpi cut"><div className="l">Abtrag</div><div className="v">{m3(abtragVal)}</div></div>
+          <div className="kpi fill"><div className="l">Auftrag</div><div className="v">{m3(auftragVal)}</div></div>
+          <div className="kpi"><div className="l">Netto</div><div className="v">{m3(live?.net_m3 ?? stats?.net_m3)}</div></div>
+          <div className="kpi"><div className="l">{onTargetLabel}</div><div className="v">{pct(onTarget)}</div></div>
+          <div className="kpi"><div className="l">Fläche</div><div className="v">{m2(live?.area_m2 ?? stats?.area_m2)}</div></div>
+        </div>
+        {(initialPerimeter?.length || excl.polygons.length || excl.zMin != null || excl.zMax != null) ? (
+          <div className="small muted" style={{ marginTop: 8 }}>
+            {initialPerimeter?.length ? "Auf den Bauperimeter beschränkt. " : ""}
+            {(excl.polygons.length || excl.zMin != null || excl.zMax != null) ? "Ausschluss (Sperrbereiche/Höhenband) ist berücksichtigt." : ""}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 
@@ -256,14 +283,8 @@ export function CompareView({
         </div>
 
         {initialPerimeter && initialPerimeter.length > 0 && (
-          <div className="small muted">Kennzahlen + Karte beziehen sich auf den Bauperimeter.</div>
+          <div className="small muted">Karte bezieht sich auf den Bauperimeter (Kennzahlen unter dem Viewer).</div>
         )}
-        <div className="grid cols-2">
-          <div className="kpi cut"><div className="l">Abtrag</div><div className="v">{m3(abtragVal)}</div></div>
-          <div className="kpi fill"><div className="l">Auftrag</div><div className="v">{m3(auftragVal)}</div></div>
-          <div className="kpi"><div className="l">Netto</div><div className="v">{m3(live?.net_m3 ?? stats?.net_m3)}</div></div>
-          <div className="kpi"><div className="l">{onTargetLabel}</div><div className="v">{pct(onTarget)}</div></div>
-        </div>
 
         <div className="panel">
           <strong className="small">Werkzeuge</strong>
