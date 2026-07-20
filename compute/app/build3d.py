@@ -119,13 +119,31 @@ def _deviation_rgb_u8(dev: np.ndarray, clip: float = 0.30) -> np.ndarray:
 
 
 # ----------------------------- Kompakte Binär-Wolke (Three.js-Viewer) -----------------------------
+# Eingebauter Punktedeckel für cloud.bin/cloudA.bin: ohne Deckel geht bei einer
+# 50-Mio-Punkt-Befliegung ~1 GB an den Browser. 8 Mio Punkte (~152 MB) sind für
+# die Anzeige mehr als genug. Env HV_CLOUD_MAX_POINTS überschreibt den Default
+# (0 oder negativ = KEIN Deckel, alle Punkte).
+_DEFAULT_MAX_POINTS = 8_000_000
+
+
+def _cloud_max_points() -> int | None:
+    env = os.environ.get("HV_CLOUD_MAX_POINTS", "").strip()
+    if env:
+        try:
+            v = int(env)
+            return v if v > 0 else None
+        except ValueError:
+            pass
+    return _DEFAULT_MAX_POINTS
+
+
 def export_cloud_bin(result: engine.Result, out_path: str,
                      max_points: int | None = None, clip: float = 0.30) -> dict:
     """Wolke als kompaktes Binärformat (v2) für den Three.js-Viewer.
 
-    Standardmässig KEINE Reduktion (alle Punkte) — die Anzeigedichte regelt der
-    Viewer clientseitig. Optional deckelbar via Env HV_CLOUD_MAX_POINTS (Stride),
-    falls Downloads zu gross werden.
+    Default-Deckel 8 Mio Punkte (Stride-Reduktion); Env HV_CLOUD_MAX_POINTS
+    überschreibt (0/negativ = alle Punkte). Die Anzeigedichte regelt der
+    Viewer clientseitig.
 
     Layout (little-endian, Floats 4-aligned, damit Float32Array-Views direkt gehen):
       uint32 count M
@@ -145,10 +163,9 @@ def export_cloud_bin(result: engine.Result, out_path: str,
     offset = np.floor(xyz.min(axis=0))
     bbox_min = xyz.min(axis=0).tolist(); bbox_max = xyz.max(axis=0).tolist()
 
-    # Kein Deckel per Default; optional via Env (z. B. bei sehr grossen Downloads).
+    # Code-Default 8 Mio Punkte; Env HV_CLOUD_MAX_POINTS als Override.
     if max_points is None:
-        env = os.environ.get("HV_CLOUD_MAX_POINTS", "").strip()
-        max_points = int(env) if env.isdigit() and int(env) > 0 else None
+        max_points = _cloud_max_points()
     n = xyz.shape[0]
     step = int(np.ceil(n / max_points)) if (max_points and n > max_points) else 1
     xyz = xyz[::step]; dev = dev[::step]
@@ -247,8 +264,7 @@ def export_cloud_a(result: engine.Result, out_path: str, offset: np.ndarray):
     xyz, rgb = engine.load_cloud(src)
     xyz, _ = georef.georeference(xyz, result.meta.get("cloud_transform"))
     n = xyz.shape[0]
-    env = os.environ.get("HV_CLOUD_MAX_POINTS", "").strip()
-    max_points = int(env) if env.isdigit() and int(env) > 0 else None
+    max_points = _cloud_max_points()
     step = int(np.ceil(n / max_points)) if (max_points and n > max_points) else 1
     xyz = xyz[::step]
     if rgb is not None:

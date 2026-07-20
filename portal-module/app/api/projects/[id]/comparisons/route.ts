@@ -2,18 +2,21 @@
  * Vergleichs-Historie eines Projekts: listen (GET) und neuen Vergleich
  * starten (POST, multipart/form-data: Soll + Ist + Parameter).
  *
- * POST: laedt Soll (IFC/TIN) + Ist (LAZ/LAS/DSM-GeoTIFF) hoch, ruft den
- * Compute-Service (computeClient.compare) und persistiert die comparison-Zeile
- * inkl. stats (= Historie).
+ * POST: Der multipart-Body wird UNGEPARST an den Compute-Service
+ * durchgestreamt (compareStream) — GB-grosse Wolken werden so nicht im
+ * Next-Prozess gepuffert. Die Metadaten (mode/name/surveyDate/Parameter/
+ * Dateinamen) kommen als Query-Parameter mit; die Formfelder im Body sind
+ * bereits in der Compute-Konvention (soll+cloud bzw. cloud1+cloud2).
+ * Anschliessend wird die comparison-Zeile inkl. stats persistiert (= Historie).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { compare, compareClouds, build3d, type Transform } from "@/lib/computeClient";
+import { compareStream, build3d, type Transform } from "@/lib/computeClient";
 import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-// Grosse Uploads (LAZ/DSM): kein Body-Limit erzwingen, Streaming via FormData.
+// Grosse Uploads (LAZ/DSM): kein Body-Limit erzwingen, Body wird gestreamt.
 export const maxDuration = 300;
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -26,37 +29,36 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const form = await req.formData();
-  const mode = String(form.get("mode") ?? "aushub").trim();
+  const q = req.nextUrl.searchParams;
+  const mode = (q.get("mode") ?? "aushub").trim();
   const clouds = mode === "clouds";
 
-  // Aushub: soll (IFC/TIN) + ist (Wolke/DSM). Wolke-vs-Wolke: cloud1 (A) + cloud2 (B).
-  const fileA = clouds ? form.get("cloud1") : form.get("soll");
-  const fileB = clouds ? form.get("cloud2") : (form.get("ist") ?? form.get("cloud"));
-  if (!(fileA instanceof File) || !(fileB instanceof File)) {
+  const sollName = (q.get("sollName") ?? "").trim();
+  const istName = (q.get("istName") ?? "").trim();
+  if (!sollName || !istName) {
     return NextResponse.json(
       { error: clouds ? "Zwei Punktwolken (A und B) erforderlich." : "Soll- und Ist-Datei erforderlich." },
       { status: 400 },
     );
   }
 
-  const name = String(form.get("name") ?? "").trim() || `Vergleich ${new Date().toLocaleDateString("de-CH")}`;
-  const surveyDateRaw = String(form.get("surveyDate") ?? "").trim();
+  const name = (q.get("name") ?? "").trim() || `Vergleich ${new Date().toLocaleDateString("de-CH")}`;
+  const surveyDateRaw = (q.get("surveyDate") ?? "").trim();
   const numOrUndef = (k: string) => {
-    const v = form.get(k);
+    const v = q.get(k);
     if (v === null || v === "") return undefined;
     const n = Number(v);
     return Number.isFinite(n) ? n : undefined;
   };
   const boolOrUndef = (k: string) => {
-    const v = form.get(k);
+    const v = q.get(k);
     if (v === null || v === "") return undefined;
     return v === "true" || v === "1";
   };
 
   let transform: Transform | undefined;
-  const tRaw = form.get("transform");
-  if (typeof tRaw === "string" && tRaw.trim()) {
+  const tRaw = q.get("transform");
+  if (tRaw && tRaw.trim()) {
     try {
       const t = JSON.parse(tRaw);
       transform = { tE: t.tE, tN: t.tN, tH: t.tH, angle_deg: t.angleDeg ?? t.angle_deg ?? 0 };
@@ -65,6 +67,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
   }
 
+  // Nur fuer die DB-Historie (params-Spalte); der Compute liest die Parameter
+  // selbst aus den Formfeldern des durchgestreamten Bodys.
   const opts = {
     res: numOrUndef("res"),
     tol: numOrUndef("tol"),
@@ -77,9 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   let result;
   try {
-    result = clouds
-      ? await compareClouds(fileA, fileA.name, fileB, fileB.name, opts)
-      : await compare(fileA, fileA.name, fileB, fileB.name, opts);
+    result = await compareStream(clouds, req.body, req.headers.get("content-type") ?? "");
   } catch (e) {
     return NextResponse.json(
       { error: `Compute-Service-Fehler: ${(e as Error).message}` },
@@ -97,10 +99,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const sollKind = clouds ? "cloud"
-    : /\.ifc$/i.test(fileA.name) ? "ifc"
-    : /\.(tif|tiff|gtiff)$/i.test(fileA.name) ? "dsm"
+    : /\.ifc$/i.test(sollName) ? "ifc"
+    : /\.(tif|tiff|gtiff)$/i.test(sollName) ? "dsm"
     : "mesh";
-  const istKind = clouds ? "cloud" : (/\.(tif|tiff|asc)$/i.test(fileB.name) ? "dsm" : "cloud");
+  const istKind = clouds ? "cloud" : (/\.(tif|tiff|asc)$/i.test(istName) ? "dsm" : "cloud");
 
   const [row] = await db
     .insert(schema.comparisons)
@@ -108,8 +110,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       projectId: params.id,
       name,
       surveyDate: surveyDateRaw ? new Date(surveyDateRaw) : null,
-      sollName: fileA.name,
-      istName: fileB.name,
+      sollName,
+      istName,
       sollKind,
       istKind,
       params: { ...opts, mode } as Record<string, unknown>,

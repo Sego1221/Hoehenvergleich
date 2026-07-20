@@ -52,62 +52,57 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
   const jobId = comparison.computeJobId;
 
-  const [project] = await db
-    .select()
-    .from(schema.projects)
-    .where(eq(schema.projects.id, comparison.projectId));
-  const sections = await db
-    .select()
-    .from(schema.sections)
-    .where(eq(schema.sections.comparisonId, params.id));
-  const regions = await db
-    .select()
-    .from(schema.regions)
-    .where(eq(schema.regions.comparisonId, params.id));
+  // ---- Unabhängige DB-Abfragen parallel (5 Roundtrips -> 1 Wartezeit) ----
+  const [[project], sections, regions, perimeter, exclusions] = await Promise.all([
+    db.select().from(schema.projects).where(eq(schema.projects.id, comparison.projectId)),
+    db.select().from(schema.sections).where(eq(schema.sections.comparisonId, params.id)),
+    db.select().from(schema.regions).where(eq(schema.regions.comparisonId, params.id)),
+    // Bauperimeter (falls gesetzt) -> Kennzahlen + Karte darauf beschränken.
+    perimeterForComparison(params.id),
+    exclusionsForComparison(params.id),
+  ]);
 
-  // ---- Bauperimeter (falls gesetzt) -> Kennzahlen + Karte darauf beschränken ----
-  const perimeter = await perimeterForComparison(params.id);
-  const exclusions = await exclusionsForComparison(params.id);
+  // ---- Kennzahlen + ΔZ-Karte + Schnitt-Profile PARALLEL vom Compute holen ----
+  // tol fliesst in "auf Soll %" ein -> Kennzahlen nach Möglichkeit neu berechnen
+  // (Fallback: gespeicherte Stats). Fehlgeschlagene Profile werden übersprungen.
+  const [statsRes, dzRes, profileRes] = await Promise.all([
+    statsForTol(jobId, tol, perimeter, exclusions).catch(() => null),
+    fetchDz(jobId, "png", tol, perimeter, undefined, exclusions).catch(() => null),
+    Promise.allSettled(
+      sections.map(async (sec): Promise<ProfilDaten | null> => {
+        const line = sec.line as [number, number][] | null;
+        if (!Array.isArray(line) || line.length < 2) return null;
+        const p = await profile(jobId, line);
+        return {
+          name: sec.name,
+          kind: sec.kind,
+          dist: p.dist ?? [],
+          soll: p.soll ?? [],
+          ist: p.ist ?? [],
+          dz: p.dz ?? [],
+          lengthM: p.length_m ?? null,
+        };
+      }),
+    ),
+  ]);
 
-  // ---- Kennzahlen für die gewählte Toleranz (frisch vom Compute, Fallback DB) ----
-  // tol fliesst in "auf Soll %" ein -> nach Möglichkeit neu berechnen.
-  let stats: ProtokollStats;
-  try {
-    const s = await statsForTol(jobId, tol, perimeter, exclusions);
-    stats = mapStats(s);
-  } catch {
-    stats = mapStats((comparison.stats as Partial<Stats> | null) ?? null);
-  }
+  const stats: ProtokollStats = statsRes
+    ? mapStats(statsRes)
+    : mapStats((comparison.stats as Partial<Stats> | null) ?? null);
 
-  // ---- ΔZ-Übersichtskarte (dz.png) vom Compute holen (Perimeter + Ausschluss) ----
   let dzPng: Uint8Array | null = null;
-  try {
-    const r = await fetchDz(jobId, "png", tol, perimeter, undefined, exclusions);
-    if (r.ok) dzPng = new Uint8Array(await r.arrayBuffer());
-  } catch {
-    dzPng = null;
-  }
-
-  // ---- Schnitt-Profile vom Compute holen (je gespeicherter Schnittlinie) ----
-  const profileData: ProfilDaten[] = [];
-  for (const sec of sections) {
-    const line = sec.line as [number, number][] | null;
-    if (!Array.isArray(line) || line.length < 2) continue;
+  if (dzRes?.ok) {
     try {
-      const p = await profile(jobId, line);
-      profileData.push({
-        name: sec.name,
-        kind: sec.kind,
-        dist: p.dist ?? [],
-        soll: p.soll ?? [],
-        ist: p.ist ?? [],
-        dz: p.dz ?? [],
-        lengthM: p.length_m ?? null,
-      });
+      dzPng = new Uint8Array(await dzRes.arrayBuffer());
     } catch {
-      // Einzelnes Profil überspringen, Rest weiter rendern.
+      dzPng = null;
     }
   }
+
+  const profileData: ProfilDaten[] = profileRes
+    .filter((r): r is PromiseFulfilledResult<ProfilDaten | null> => r.status === "fulfilled")
+    .map((r) => r.value)
+    .filter((v): v is ProfilDaten => v !== null);
 
   // ---- Bereichs-Volumen (aus gespeicherten regions.volumes) ----
   const bereiche: BereichDaten[] = regions.map((r) => {

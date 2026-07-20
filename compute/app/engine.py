@@ -237,6 +237,71 @@ def compare(ifc_path: str, cloud_path: str, *, res=0.25, ground_pct=0.20,
     return Result(grid, soll, ist, dz, valid, meta)
 
 
+def _cloud_header_bbox(path: str, transform: dict | None):
+    """BBox einer LAZ/LAS-Wolke aus dem HEADER (kein Punkt-Load).
+
+    Bei lokalen Wolken (nicht LV95) werden die 8 BBox-Ecken transformiert —
+    die resultierende BBox umschliesst alle Punkte (bei Drehung minim grösser
+    als die exakte Punkt-BBox; überzählige Zellen bleiben einfach NaN).
+    Rückgabe: (mins, maxs, georef-info) wie georef.georeference.
+    """
+    import laspy
+    with laspy.open(path) as f:
+        mins = np.asarray(f.header.mins, dtype=np.float64)
+        maxs = np.asarray(f.header.maxs, dtype=np.float64)
+    if georef.is_lv95(mins, maxs):
+        return mins, maxs, {"already_lv95": True, "transformed": False}
+    if transform is None:
+        raise ValueError(
+            "Modell liegt lokal (nicht LV95) und es ist keine Projekt-Transformation hinterlegt. "
+            "Basispunkt/Drehung eingeben oder Passpunkt-Align durchfuehren."
+        )
+    corners = np.array([[x, y, z] for x in (mins[0], maxs[0])
+                        for y in (mins[1], maxs[1]) for z in (mins[2], maxs[2])])
+    t = (transform["tE"], transform["tN"], transform["tH"])
+    out = georef.apply_transform(corners, t, transform["angle_deg"])
+    return out.min(axis=0), out.max(axis=0), {"already_lv95": False, "transformed": True,
+                                              "transform": transform}
+
+
+def _rasterize_cloud_seq(path: str, transform: dict | None, transformed: bool,
+                         rel_grid: "Grid", offset_en: np.ndarray,
+                         ground_pct: float, exg_thr: float, use_veg: bool):
+    """Eine Wolke laden und sofort zum Boden-DSM rastern (speicherschonend).
+
+    xyz wird als float32 RELATIV zu offset_en (E/N; H bleibt absolut) gehalten —
+    halber Speicher gegenüber float64-Vollkopien. RGB wird nur geladen, wenn der
+    Vegetationsfilter aktiv ist. Alle Zwischenpuffer werden vor der Rückgabe
+    freigegeben, damit nie zwei Wolken gleichzeitig im RAM liegen.
+    """
+    import laspy
+    las = laspy.read(path)
+    n = len(las.points)
+    xyz = np.empty((n, 3), dtype=np.float32)
+    if transformed and transform is not None:
+        # Lokale Wolke: erst nach LV95 transformieren (float64), dann kompakt ablegen.
+        pts = np.vstack((np.asarray(las.x), np.asarray(las.y), np.asarray(las.z))).T
+        t = (transform["tE"], transform["tN"], transform["tH"])
+        pts = georef.apply_transform(pts, t, transform["angle_deg"])
+        xyz[:, 0] = pts[:, 0] - offset_en[0]
+        xyz[:, 1] = pts[:, 1] - offset_en[1]
+        xyz[:, 2] = pts[:, 2]
+        del pts
+    else:
+        # Bereits LV95: dimensionsweise relativ ablegen (nur 1 float64-Puffer transient).
+        xyz[:, 0] = np.asarray(las.x) - offset_en[0]
+        xyz[:, 1] = np.asarray(las.y) - offset_en[1]
+        xyz[:, 2] = np.asarray(las.z)
+    rgb = None
+    if use_veg and "red" in las.point_format.dimension_names:
+        rgb = np.vstack([np.asarray(las[c]).astype(np.float32)
+                         for c in ("red", "green", "blue")]).T
+    del las
+    z, info = ground_dsm(xyz, rgb, rel_grid, ground_pct, exg_thr, use_veg)
+    del xyz, rgb
+    return z, info
+
+
 def compare_clouds(cloud1_path: str, cloud2_path: str, *, res=0.25, ground_pct=0.20,
                    exg_thr=0.10, use_veg=True, cap=5.0, transform: dict | None = None) -> Result:
     """Zwei Punktwolken vergleichen: Referenz A (cloud1) vs. Vergleich B (cloud2).
@@ -246,19 +311,27 @@ def compare_clouds(cloud1_path: str, cloud2_path: str, *, res=0.25, ground_pct=0
     negativ = Abtrag). Statistik/Profile/Volumen/3D laufen danach generisch wie
     beim Aushub-Vergleich. Die 3D-Referenzfläche kommt aus dem DSM von A
     (soll_kind = "dsm"), da es kein Soll-Mesh gibt.
-    """
-    xyz1, rgb1 = load_cloud(cloud1_path)
-    xyz1, g1 = georef.georeference(xyz1, transform)
-    xyz2, rgb2 = load_cloud(cloud2_path)
-    xyz2, g2 = georef.georeference(xyz2, transform)
-    x0 = min(float(xyz1[:, 0].min()), float(xyz2[:, 0].min()))
-    y0 = min(float(xyz1[:, 1].min()), float(xyz2[:, 1].min()))
-    x1 = max(float(xyz1[:, 0].max()), float(xyz2[:, 0].max()))
-    y1 = max(float(xyz1[:, 1].max()), float(xyz2[:, 1].max()))
-    grid = make_grid(x0, y0, x1, y1, res)
 
-    soll, i1 = ground_dsm(xyz1, rgb1, grid, ground_pct, exg_thr, use_veg)   # Referenz A
-    ist, i2 = ground_dsm(xyz2, rgb2, grid, ground_pct, exg_thr, use_veg)    # Vergleich B
+    Speicher: Die BBox kommt aus den LAS-Headern (kein Punkt-Load); die Wolken
+    werden danach SEQUENTIELL geladen, gerastert und sofort freigegeben — nie
+    beide gleichzeitig im RAM. Punkte liegen als float32 relativ zu einem
+    E/N-Offset; RGB wird nur bei aktivem Vegetationsfilter gelesen.
+    """
+    mn1, mx1, g1 = _cloud_header_bbox(cloud1_path, transform)
+    mn2, mx2, g2 = _cloud_header_bbox(cloud2_path, transform)
+    x0 = min(float(mn1[0]), float(mn2[0]))
+    y0 = min(float(mn1[1]), float(mn2[1]))
+    x1 = max(float(mx1[0]), float(mx2[0]))
+    y1 = max(float(mx1[1]), float(mx2[1]))
+    grid = make_grid(x0, y0, x1, y1, res)
+    # E/N-Offset, damit float32-Punktkoordinaten mm-genau bleiben (LV95 ~2.6 Mio).
+    offset_en = np.floor(np.array([x0, y0], dtype=np.float64))
+    rel_grid = Grid(grid.x0 - offset_en[0], grid.y0 - offset_en[1], grid.res, grid.nx, grid.ny)
+
+    soll, i1 = _rasterize_cloud_seq(cloud1_path, transform, bool(g1.get("transformed")),
+                                    rel_grid, offset_en, ground_pct, exg_thr, use_veg)  # Referenz A
+    ist, i2 = _rasterize_cloud_seq(cloud2_path, transform, bool(g2.get("transformed")),
+                                   rel_grid, offset_en, ground_pct, exg_thr, use_veg)   # Vergleich B
 
     dz = ist - soll
     valid = np.isfinite(dz) & (np.abs(dz) <= cap)

@@ -8,21 +8,15 @@ import { db, schema } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const [comparison] = await db
-    .select()
-    .from(schema.comparisons)
-    .where(eq(schema.comparisons.id, params.id));
+  // Unabhängige Abfragen parallel (spart 2 DB-Roundtrips Wartezeit).
+  const [[comparison], sections, regions] = await Promise.all([
+    db.select().from(schema.comparisons).where(eq(schema.comparisons.id, params.id)),
+    db.select().from(schema.sections).where(eq(schema.sections.comparisonId, params.id)),
+    db.select().from(schema.regions).where(eq(schema.regions.comparisonId, params.id)),
+  ]);
   if (!comparison) {
     return NextResponse.json({ error: "Nicht gefunden." }, { status: 404 });
   }
-  const sections = await db
-    .select()
-    .from(schema.sections)
-    .where(eq(schema.sections.comparisonId, params.id));
-  const regions = await db
-    .select()
-    .from(schema.regions)
-    .where(eq(schema.regions.comparisonId, params.id));
   return NextResponse.json({ comparison, sections, regions });
 }
 

@@ -29,36 +29,24 @@ export type Volumes = {
   mean_m?: number; median_m?: number; on_target_pct?: number;
 };
 
-/** Vergleich starten: Soll (IFC/TIN) + Ist (LAZ/LAS/DSM-GeoTIFF) hochladen. */
-export async function compare(
-  soll: Blob, sollName: string, ist: Blob, istName: string,
-  opts: { res?: number; tol?: number; ground_pct?: number; exg_thr?: number;
-          use_veg?: boolean; cap?: number; transform?: Transform } = {},
+/**
+ * Vergleich starten: den eingehenden multipart/form-data-Body UNGEPARST an den
+ * Compute durchstreamen (kein Puffern GB-grosser Wolken im Next-Prozess).
+ * Der Browser sendet die Formfelder bereits in der Compute-Konvention
+ * (soll+cloud bzw. cloud1+cloud2, res/tol/...); der Compute parst das Multipart.
+ */
+export async function compareStream(
+  clouds: boolean, body: ReadableStream<Uint8Array> | null, contentType: string,
 ): Promise<CompareResult> {
-  const fd = new FormData();
-  fd.append("soll", soll, sollName);
-  fd.append("cloud", ist, istName);
-  for (const k of ["res", "tol", "ground_pct", "exg_thr", "use_veg", "cap"] as const) {
-    if (opts[k] !== undefined) fd.append(k, String(opts[k]));
-  }
-  if (opts.transform) fd.append("transform", JSON.stringify(opts.transform));
-  return req<CompareResult>("/compare", { method: "POST", body: fd });
-}
-
-/** Wolke-gegen-Wolke: Referenz A vs. Vergleich B (beide LAZ/LAS). ΔZ = B − A. */
-export async function compareClouds(
-  cloud1: Blob, cloud1Name: string, cloud2: Blob, cloud2Name: string,
-  opts: { res?: number; tol?: number; ground_pct?: number; exg_thr?: number;
-          use_veg?: boolean; cap?: number; transform?: Transform } = {},
-): Promise<CompareResult> {
-  const fd = new FormData();
-  fd.append("cloud1", cloud1, cloud1Name);
-  fd.append("cloud2", cloud2, cloud2Name);
-  for (const k of ["res", "tol", "ground_pct", "exg_thr", "use_veg", "cap"] as const) {
-    if (opts[k] !== undefined) fd.append(k, String(opts[k]));
-  }
-  if (opts.transform) fd.append("transform", JSON.stringify(opts.transform));
-  return req<CompareResult>("/compare-clouds", { method: "POST", body: fd });
+  const r = await fetch(`${BASE}${clouds ? "/compare-clouds" : "/compare"}`, {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body,
+    // undici (Node-fetch) verlangt duplex fuer Streaming-Request-Bodies.
+    duplex: "half",
+  } as RequestInit);
+  if (!r.ok) throw new Error(`Compute ${r.status}: ${await r.text()}`);
+  return r.json() as Promise<CompareResult>;
 }
 
 /** Bauperimeter = Liste von Polygonen [[ [E,N],... ],...] (LV95). */

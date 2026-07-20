@@ -6,7 +6,7 @@ hält Ergebnisse nur kurz im Speicher, damit Toleranz-Slider und Schnitte ohne
 Neuberechnung antworten.
 """
 from __future__ import annotations
-import io, json, os, tempfile, uuid
+import asyncio, io, json, os, re, shutil, tempfile, threading, time, uuid
 
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -39,8 +39,22 @@ def index():
     return FileResponse(_INDEX_HTML, media_type="text/html")
 
 # MVP: In-Memory-Cache job_id -> engine.Result (später Objektspeicher/Redis).
+# LRU: Zugriff (_get) schiebt den Eintrag ans Ende; verdrängt wird vorne.
+# Lock, weil die schweren Endpoints als def im Threadpool laufen.
 _RESULTS: dict[str, engine.Result] = {}
+_RESULTS_LOCK = threading.Lock()
 _MAX_JOBS = 32
+
+# job_id/model_id sind bei uns uuid4().hex[:12]; grosszügiges, aber striktes
+# Muster (keine Pfadzeichen) gegen Path-Traversal über Pfad-/Formfelder.
+_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _check_id(value: str, name: str = "id") -> str:
+    """ID serverseitig validieren — sonst 400 (Path-Traversal-Schutz)."""
+    if not value or not _ID_RE.fullmatch(value):
+        raise HTTPException(400, f"Ungültige {name}.")
+    return value
 
 # Upload-Quellen müssen über den Vergleich hinaus leben, damit die 3D-Datengrundlage
 # (Octree/GLB) Wolke + Soll erneut lesen kann. Persistent unter <DATA>/uploads/.
@@ -63,35 +77,116 @@ def _evict(jid: str, result: engine.Result):
             except OSError: pass
 
 
+def _insert(jid: str, result: engine.Result) -> None:
+    """Eintrag mit Limit-Prüfung einfügen — gilt auch für das Nachladen vom
+    Volume in _get, damit der RAM-Cache nie über _MAX_JOBS hinauswächst."""
+    with _RESULTS_LOCK:
+        while len(_RESULTS) >= _MAX_JOBS:
+            old_id = next(iter(_RESULTS))
+            _evict(old_id, _RESULTS.pop(old_id))
+        _RESULTS[jid] = result
+
+
 def _store(result: engine.Result) -> str:
-    if len(_RESULTS) >= _MAX_JOBS:
-        old_id = next(iter(_RESULTS))
-        _evict(old_id, _RESULTS.pop(old_id))
     jid = uuid.uuid4().hex[:12]
-    _RESULTS[jid] = result
+    _insert(jid, result)
     return jid
 
 
 def _get(job_id: str) -> engine.Result:
-    r = _RESULTS.get(job_id)
-    if r is None:
-        # Vom Volume nachladen (überlebt Compute-Restart / RAM-Cache-Verlust).
-        r = build3d.load_result(job_id)
+    _check_id(job_id, "job_id")
+    with _RESULTS_LOCK:
+        r = _RESULTS.get(job_id)
         if r is not None:
-            _RESULTS[job_id] = r
+            # LRU: Zugriff schiebt den Eintrag ans Ende (verdrängt wird vorne).
+            _RESULTS[job_id] = _RESULTS.pop(job_id)
+            return r
+    # Vom Volume nachladen (überlebt Compute-Restart / RAM-Cache-Verlust).
+    r = build3d.load_result(job_id)
     if r is None:
         raise HTTPException(404, "Job nicht gefunden (evtl. abgelaufen). Vergleich erneut starten.")
+    _insert(job_id, r)
     return r
 
 
-async def _save_upload(up: UploadFile, suffix: str) -> str:
+def _save_upload(up: UploadFile, suffix: str) -> str:
     # Persistent unter _UPLOAD_DIR (nicht Tempdir), damit build3d die Quelle
     # später erneut lesen kann. Aufräumen bei Job-Verdrängung (_evict).
+    # Synchron via up.file — die schweren Endpoints laufen als def im Threadpool.
     fd, path = tempfile.mkstemp(suffix=suffix, dir=_UPLOAD_DIR)
     with os.fdopen(fd, "wb") as fh:
-        while chunk := await up.read(1 << 20):
-            fh.write(chunk)
+        shutil.copyfileobj(up.file, fh, 1 << 20)
     return path
+
+
+# ----------------------------- Volume-Aufräumen -----------------------------
+# uploads/, results/ und octrees/ wachsen sonst unbegrenzt (gelöscht wurde nur
+# bei RAM-Verdrängung). Beim Start + täglich alles entfernen, was älter als
+# HV_RETENTION_DAYS (Default 90 Tage) ist.
+_RETENTION_DAYS = float(os.environ.get("HV_RETENTION_DAYS", "90"))
+
+
+def _tree_mtime(path: str) -> float:
+    """Jüngste mtime im Baum (Verzeichnis-mtime allein ist nicht verlässlich)."""
+    newest = 0.0
+    try:
+        newest = os.path.getmtime(path)
+    except OSError:
+        pass
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(root, f)))
+            except OSError:
+                pass
+    return newest
+
+
+def _cleanup_volume(max_age_days: float = _RETENTION_DAYS) -> dict:
+    """Alte Artefakte vom Volume entfernen: Upload-Quellen, Ergebnis-npz und
+    3D-Job-Verzeichnisse (Octree/cloud.bin/GLB). bfmodels bleiben (Kataloge)."""
+    cutoff = time.time() - max_age_days * 86400.0
+    root = build3d.data_root()
+    removed = {"uploads": 0, "results": 0, "octrees": 0}
+    # Dateien: uploads/ + results/ (npz + meta.json)
+    for sub, key in (("uploads", "uploads"), ("results", "results")):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            p = os.path.join(d, name)
+            try:
+                if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+                    removed[key] += 1
+            except OSError:
+                pass
+    # Verzeichnisse: octrees/<job_id>/ (Octree, cloud.bin, soll.glb, scan.*)
+    d = os.path.join(root, "octrees")
+    if os.path.isdir(d):
+        for name in os.listdir(d):
+            p = os.path.join(d, name)
+            try:
+                if os.path.isdir(p) and _tree_mtime(p) < cutoff:
+                    shutil.rmtree(p, ignore_errors=True)
+                    removed["octrees"] += 1
+            except OSError:
+                pass
+    return removed
+
+
+@app.on_event("startup")
+async def _start_cleanup_job():
+    async def _loop():
+        while True:
+            try:
+                removed = await asyncio.to_thread(_cleanup_volume)
+                if any(removed.values()):
+                    print(f"[cleanup] entfernt: {removed} (älter als {_RETENTION_DAYS:g} Tage)")
+            except Exception as e:
+                print(f"[cleanup] fehlgeschlagen: {type(e).__name__}: {e}")
+            await asyncio.sleep(24 * 3600)
+    asyncio.get_running_loop().create_task(_loop())
 
 
 @app.get("/health")
@@ -100,7 +195,7 @@ def health():
 
 
 @app.post("/bauteil/evaluate")
-async def bauteil_evaluate(
+def bauteil_evaluate(
     soll: UploadFile = File(..., description="Struktur-IFC (Etappe/Betonage)"),
     cloud: UploadFile = File(..., description="As-Built-Punktwolke LAZ/LAS"),
     transform: str = Form(..., description="{tE,tN,tH,angle_deg} Strukturmodell-Georef"),
@@ -122,8 +217,8 @@ async def bauteil_evaluate(
     ist_ext = os.path.splitext(cloud.filename or "")[1].lower()
     if ist_ext not in (".laz", ".las"):
         raise HTTPException(415, "Ist muss LAZ/LAS sein.")
-    ifc_path = await _save_upload(soll, soll_ext)
-    cloud_path = await _save_upload(cloud, ist_ext)
+    ifc_path = _save_upload(soll, soll_ext)
+    cloud_path = _save_upload(cloud, ist_ext)
     jid = uuid.uuid4().hex[:12]
     jd = build3d.job_dir(jid)
     glb = os.path.join(jd, "status.glb")
@@ -150,7 +245,7 @@ async def bauteil_evaluate(
 
 
 @app.post("/bauteil/model")
-async def bauteil_model(
+def bauteil_model(
     ifcs: list[UploadFile] = File(..., description="Ein oder mehrere Struktur-IFCs (Etappen)"),
     transform: str = Form(..., description="{tE,tN,tH,angle_deg} Projekt-Georef (lokal->LV95)"),
     model_id: str = Form("", description="Vorhandenes Modell ergaenzen (sonst neu)"),
@@ -165,6 +260,7 @@ async def bauteil_model(
     except Exception:
         raise HTTPException(400, "transform muss {tE,tN,tH,angle_deg} sein.")
     mid = (model_id or uuid.uuid4().hex[:12]).strip()
+    _check_id(mid, "model_id")   # Path-Traversal-Schutz (model_dir macht makedirs)
     mdir = bauteil.model_dir(mid)
     srcdir = os.path.join(mdir, "src"); os.makedirs(srcdir, exist_ok=True)
     # Dateien unter ihrem ORIGINAL-Namen ablegen (sanitisiert) — Re-Upload
@@ -178,8 +274,7 @@ async def bauteil_model(
         safe = _re.sub(r"[^\w.\-äöüÄÖÜ]+", "_", os.path.basename(up.filename or "etappe.ifc"))
         dst = os.path.join(srcdir, safe)
         with open(dst, "wb") as fh:
-            while chunk := await up.read(1 << 20):
-                fh.write(chunk)
+            shutil.copyfileobj(up.file, fh, 1 << 20)
         saved.append({"name": safe, "size": os.path.getsize(dst)})
     import glob as _glob
     paths = sorted(_glob.glob(os.path.join(srcdir, "*.ifc")) + _glob.glob(os.path.join(srcdir, "*.ifczip")))
@@ -209,7 +304,7 @@ def _list_model_files(srcdir: str) -> list[dict]:
 @app.delete("/bauteil/model/{model_id}")
 def bauteil_model_delete(model_id: str):
     """Ganzen Modell-Katalog (Geometrie + Quell-IFCs) vom Volume entfernen."""
-    import shutil
+    _check_id(model_id, "model_id")
     d = os.path.join(build3d.data_root(), "bfmodels", os.path.basename(model_id))
     shutil.rmtree(d, ignore_errors=True)
     return {"ok": True}
@@ -218,6 +313,7 @@ def bauteil_model_delete(model_id: str):
 @app.get("/bauteil/model/{model_id}/files")
 def bauteil_model_files(model_id: str):
     """Liste der gespeicherten Etappen-IFCs des Modells."""
+    _check_id(model_id, "model_id")
     mdir = bauteil.model_dir(model_id)
     return {"files": _list_model_files(os.path.join(mdir, "src"))}
 
@@ -225,6 +321,7 @@ def bauteil_model_files(model_id: str):
 @app.delete("/bauteil/model/{model_id}/files/{name}")
 def bauteil_model_file_delete(model_id: str, name: str):
     """Etappen-IFC loeschen + Katalog neu aufbauen (gleiche Transform)."""
+    _check_id(model_id, "model_id")
     mdir = bauteil.model_dir(model_id)
     srcdir = os.path.join(mdir, "src")
     # Pfadtraversal-Schutz.
@@ -256,7 +353,7 @@ def bauteil_model_file_delete(model_id: str, name: str):
 
 
 @app.post("/bauteil/model/{model_id}/scan")
-async def bauteil_scan(
+def bauteil_scan(
     model_id: str,
     cloud: UploadFile = File(..., description="Tages-Scan LAZ/LAS"),
     transform: str = Form(""),
@@ -266,6 +363,7 @@ async def bauteil_scan(
     """Tages-Scan gegen den Modell-Katalog auswerten -> Status je Bauteil + GLB.
     Mit 'transform' wird die aktuelle Projekt-Georef genutzt UND persistiert,
     damit nicht die (evtl. falsche) Georef vom Upload-Zeitpunkt verwendet wird."""
+    _check_id(model_id, "model_id")
     mdir = bauteil.model_dir(model_id)
     try:
         catalog, tf = bauteil.load_model(mdir)
@@ -282,7 +380,7 @@ async def bauteil_scan(
     ext = os.path.splitext(cloud.filename or "")[1].lower()
     if ext not in (".laz", ".las"):
         raise HTTPException(415, "Scan muss LAZ/LAS sein.")
-    cloud_path = await _save_upload(cloud, ext)
+    cloud_path = _save_upload(cloud, ext)
     jid = uuid.uuid4().hex[:12]
     jd = build3d.job_dir(jid)
     glb = os.path.join(jd, "status.glb")
@@ -305,10 +403,12 @@ async def bauteil_scan(
 
 
 @app.post("/bauteil/model/{model_id}/rescan/{job_id}")
-async def bauteil_rescan(model_id: str, job_id: str, transform: str = Form(""),
-                         res: float = Form(0.10), tol: float = Form(0.05)):
+def bauteil_rescan(model_id: str, job_id: str, transform: str = Form(""),
+                   res: float = Form(0.10), tol: float = Form(0.05)):
     """Bestehende Auswertung wiederholen: gespeicherte Scan-Wolke gegen den
     AKTUELLEN Katalog + (optional) aktuelle Georef neu auswerten."""
+    _check_id(model_id, "model_id")
+    _check_id(job_id, "job_id")
     mdir = bauteil.model_dir(model_id)
     try:
         catalog, tf = bauteil.load_model(mdir)
@@ -341,6 +441,7 @@ async def bauteil_rescan(model_id: str, job_id: str, transform: str = Form(""),
 @app.get("/bauteil/model/{model_id}/preview.glb")
 def bauteil_model_preview(model_id: str):
     """GLB des ganzen Katalogs (alle Etappen, IFC-Farben) zur Kontrolle."""
+    _check_id(model_id, "model_id")
     mdir = bauteil.model_dir(model_id)
     try:
         path = bauteil.catalog_preview_glb(mdir)
@@ -354,6 +455,7 @@ def bauteil_model_preview(model_id: str):
 @app.get("/jobs/{job_id}/status.glb")
 def bauteil_status_glb(job_id: str):
     """Nach Status eingefärbtes Struktur-GLB für den Baufortschritt-Viewer."""
+    _check_id(job_id, "job_id")
     path = os.path.join(build3d.job_dir(job_id), "status.glb")
     if not os.path.exists(path):
         raise HTTPException(404, "status.glb nicht vorhanden.")
@@ -361,7 +463,7 @@ def bauteil_status_glb(job_id: str):
 
 
 @app.post("/dxf/polylines")
-async def dxf_polylines(file: UploadFile = File(..., description="DXF (DWG vorher zu DXF exportieren)")):
+def dxf_polylines(file: UploadFile = File(..., description="DXF (DWG vorher zu DXF exportieren)")):
     """DXF -> geschlossene Polylinien (für Bauperimeter/Bereiche).
 
     Liefert { polylines: [{layer, closed, n, points:[[E,N],...], area_m2, looks_lv95}] }.
@@ -370,7 +472,7 @@ async def dxf_polylines(file: UploadFile = File(..., description="DXF (DWG vorhe
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in {".dxf"}:
         raise HTTPException(415, "Nur DXF. DWG bitte im CAD nach DXF exportieren.")
-    path = await _save_upload(file, ext)
+    path = _save_upload(file, ext)
     try:
         polylines = dxfmod.extract_polylines(path)
     except Exception as e:
@@ -386,7 +488,7 @@ _SOLL_EXT = {".ifc", ".ifczip", ".obj", ".ply", ".stl", ".gltf", ".glb", ".off",
 
 
 @app.post("/compare")
-async def compare(
+def compare(
     soll: UploadFile = File(..., description="Soll: IFC/TIN-Mesh oder DSM-GeoTIFF"),
     cloud: UploadFile = File(..., description="Ist: Punktwolke LAZ/LAS"),
     res: float = Form(0.25),
@@ -405,11 +507,11 @@ async def compare(
     soll_ext = os.path.splitext(soll.filename or "")[1].lower()
     if not skip_type and soll_ext not in _SOLL_EXT:
         raise HTTPException(415, f"Soll-Format {soll_ext!r} nicht unterstützt. Erlaubt: {sorted(_SOLL_EXT)}")
-    ifc_path = await _save_upload(soll, soll_ext)
+    ifc_path = _save_upload(soll, soll_ext)
     ist_ext = os.path.splitext(cloud.filename or "")[1].lower()
     if not skip_type and ist_ext not in {".laz", ".las", ".tif", ".tiff", ".gtiff"}:
         raise HTTPException(415, f"Ist-Format {ist_ext!r} nicht unterstützt. Erlaubt: LAZ/LAS oder DSM-GeoTIFF.")
-    cloud_path = await _save_upload(cloud, ist_ext)
+    cloud_path = _save_upload(cloud, ist_ext)
     try:
         result = engine.compare(ifc_path, cloud_path, res=res, ground_pct=ground_pct,
                                 exg_thr=exg_thr, use_veg=use_veg, cap=cap, transform=tf)
@@ -439,7 +541,7 @@ async def compare(
 
 
 @app.post("/compare-clouds")
-async def compare_clouds(
+def compare_clouds(
     cloud1: UploadFile = File(..., description="Referenz-Wolke A (LAZ/LAS)"),
     cloud2: UploadFile = File(..., description="Vergleichs-Wolke B (LAZ/LAS)"),
     res: float = Form(0.25),
@@ -458,8 +560,8 @@ async def compare_clouds(
     e2 = os.path.splitext(cloud2.filename or "")[1].lower()
     if not skip_type and (e1 not in {".laz", ".las"} or e2 not in {".laz", ".las"}):
         raise HTTPException(415, "Beide Dateien müssen LAZ/LAS-Punktwolken sein.")
-    p1 = await _save_upload(cloud1, e1)
-    p2 = await _save_upload(cloud2, e2)
+    p1 = _save_upload(cloud1, e1)
+    p2 = _save_upload(cloud2, e2)
     try:
         result = engine.compare_clouds(p1, p2, res=res, ground_pct=ground_pct,
                                        exg_thr=exg_thr, use_veg=use_veg, cap=cap, transform=tf)
@@ -639,6 +741,7 @@ def job_build3d(job_id: str, payload: dict | None = None):
 @app.get("/jobs/{job_id}/scene.json")
 def job_scene(job_id: str):
     """scene.json für den Viewer (offset/cloudUrl/meshUrl/bbox). 404 wenn noch nicht gebaut."""
+    _check_id(job_id, "job_id")
     path = os.path.join(build3d.job_dir(job_id), "scene.json")
     if not os.path.exists(path):
         raise HTTPException(404, "Noch keine 3D-Datengrundlage. Zuerst POST /jobs/{id}/build3d.")
@@ -648,6 +751,7 @@ def job_scene(job_id: str):
 @app.get("/jobs/{job_id}/soll.glb")
 def job_soll_glb(job_id: str):
     """Soll-Mesh als GLB (um scene.offset verschoben, float32-tauglich)."""
+    _check_id(job_id, "job_id")
     path = os.path.join(build3d.job_dir(job_id), "soll.glb")
     if not os.path.exists(path):
         raise HTTPException(404, "Soll-GLB nicht vorhanden. Zuerst POST /jobs/{id}/build3d.")
@@ -657,6 +761,7 @@ def job_soll_glb(job_id: str):
 @app.get("/jobs/{job_id}/cloud.bin")
 def job_cloud_bin(job_id: str):
     """Kompakte Binär-Wolke (uint32 count + float32 xyz + uint8 rgb) für den Three.js-Viewer."""
+    _check_id(job_id, "job_id")
     path = os.path.join(build3d.job_dir(job_id), "cloud.bin")
     if not os.path.exists(path):
         raise HTTPException(404, "cloud.bin nicht vorhanden. Zuerst POST /jobs/{id}/build3d.")
@@ -666,6 +771,7 @@ def job_cloud_bin(job_id: str):
 @app.get("/jobs/{job_id}/cloudA.bin")
 def job_cloud_bin_a(job_id: str):
     """Zweite Wolke (Referenz A) bei Wolke-gegen-Wolke — gleiches Binärformat."""
+    _check_id(job_id, "job_id")
     path = os.path.join(build3d.job_dir(job_id), "cloudA.bin")
     if not os.path.exists(path):
         raise HTTPException(404, "cloudA.bin nicht vorhanden (nur bei Wolke-gegen-Wolke).")
@@ -682,6 +788,7 @@ def job_cloud(job_id: str, path: str):
 
     FileResponse unterstützt HTTP-Range — Potree lädt octree.bin per Range.
     """
+    _check_id(job_id, "job_id")
     try:
         full = build3d.cloud_file(job_id, path)
     except ValueError:

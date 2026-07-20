@@ -138,32 +138,48 @@ function NewComparisonDialog({
     }
     setBusy(true);
     try {
+      // Formfelder in der COMPUTE-Konvention (soll+cloud bzw. cloud1+cloud2):
+      // die API-Route streamt den Body ungeparst an den Compute durch.
       const fd = new FormData();
       if (clouds) {
-        fd.append("mode", "clouds");
         fd.append("cloud1", soll);
         fd.append("cloud2", ist);
       } else {
         fd.append("soll", soll);
-        fd.append("ist", ist);
+        fd.append("cloud", ist);
       }
-      if (name.trim()) fd.append("name", name.trim());
-      if (surveyDate) fd.append("surveyDate", surveyDate);
       fd.append("res", String(res));
       fd.append("tol", String(tol));
       // Slider ist Prozent (1..50); die Engine erwartet einen Bruch (0..1).
       fd.append("ground_pct", String(groundPct / 100));
       fd.append("cap", String(cap));   // Höhendifferenzen über cap = Ausreisser, verworfen
       fd.append("use_veg", String(useVeg));
+      // Metadaten fuer die DB-Historie als Query-Parameter (die Route parst den
+      // Body nicht mehr).
+      const qs = new URLSearchParams({
+        mode,
+        sollName: soll.name,
+        istName: ist.name,
+        res: String(res),
+        tol: String(tol),
+        ground_pct: String(groundPct / 100),
+        cap: String(cap),
+        use_veg: String(useVeg),
+      });
+      if (name.trim()) qs.set("name", name.trim());
+      if (surveyDate) qs.set("surveyDate", surveyDate);
       // Georef-Transformation ist eine Projekt-Grundlage -> immer automatisch
       // anwenden (keine Frage pro Messung).
       if (hasTransform) {
         const tr = await fetch(`${BP}/api/projects/${projectId}/transform`).then((r) => r.json());
         // Kanonische lokal->LV95-Form (mit angle_deg-Key); Engine ueberspringt
         // ohnehin Modelle, die schon in LV95 liegen (Aushub).
-        if (tr?.forward) fd.append("transform", JSON.stringify(tr.forward));
+        if (tr?.forward) {
+          fd.append("transform", JSON.stringify(tr.forward));
+          qs.set("transform", JSON.stringify(tr.forward));
+        }
       }
-      const r = await fetch(`${BP}/api/projects/${projectId}/comparisons`, { method: "POST", body: fd });
+      const r = await fetch(`${BP}/api/projects/${projectId}/comparisons?${qs.toString()}`, { method: "POST", body: fd });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "Fehler");
       toast("Vergleich berechnet.");

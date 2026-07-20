@@ -12,6 +12,7 @@
  */
 import { cookies } from "next/headers";
 import { jwtVerify } from "jose";
+import { ladeFrischeClaims } from "@/lib/frische-claims";
 
 export const PORTAL_COOKIE = "portal_session";
 export const PORTAL_ISSUER = "birchmeier-portal";
@@ -51,7 +52,7 @@ export async function getSession(): Promise<PortalUser | null> {
     const token = store.get(PORTAL_COOKIE)?.value;
     if (!token) return null;
     const { payload } = await jwtVerify(token, secret(), { issuer: PORTAL_ISSUER });
-    return {
+    const user: PortalUser = {
       sub: String(payload.sub ?? ""),
       name: String((payload as Record<string, unknown>).name ?? payload.email ?? "Benutzer"),
       email: typeof payload.email === "string" ? payload.email : undefined,
@@ -60,6 +61,16 @@ export async function getSession(): Promise<PortalUser | null> {
       roles: Array.isArray((payload as Record<string, unknown>).roles)
         ? ((payload as Record<string, unknown>).roles as string[]) : [],
     };
+    // Rollen/Module frisch vom Portal holen — im Token sind sie auf dem Stand
+    // des letzten Logins. Portal nicht erreichbar -> Token gilt (Verfügbarkeit
+    // vor Frische); Benutzer deaktiviert/gelöscht -> keine Session.
+    const frisch = await ladeFrischeClaims(user.sub);
+    if (frisch.status === "invalid") return null;
+    if (frisch.status === "ok") {
+      user.roles = frisch.roles;
+      user.modules = frisch.modules;
+    }
+    return user;
   } catch {
     return null;
   }

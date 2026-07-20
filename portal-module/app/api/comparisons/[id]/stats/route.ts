@@ -23,8 +23,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Kein Compute-Job vorhanden." }, { status: 404 });
   }
   try {
-    const perimeter = full ? null : await perimeterForComparison(params.id);
-    const exclusions = await exclusionsForComparison(params.id);
+    const [perimeter, exclusions] = await Promise.all([
+      full ? Promise.resolve(null) : perimeterForComparison(params.id),
+      exclusionsForComparison(params.id),
+    ]);
     const stats = await statsForTol(c.jobId, tol, perimeter, exclusions);
     return NextResponse.json(stats);
   } catch (e) {
